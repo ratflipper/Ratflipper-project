@@ -1,0 +1,9 @@
+customtkinter>=5.2.0
+aiofiles>=23.2.1
+nats-py>=2.6.0
+aiohttp>=3.9.1
+watchdog>=3.0.0
+pandas>=2.1.4
+pillow>=10.1.0
+matplotlib>=3.8.2
+pyinstaller>=6.2.0 
