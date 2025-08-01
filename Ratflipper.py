@@ -2480,67 +2480,109 @@ class RatFlipperGUI:
         """Adds a new opportunity to a batch and schedules a single UI update."""
         if self.debug_enabled:
             logger.info(f"Real-time opportunity detected: {opportunity.item_name} in {opportunity.city}")
+        
+        # Add to batch
         self.opportunity_batch.append(opportunity)
-        # Also log to debug log for the debug window
         
-        is_premium = self.premium_var.get()
-        tax_rate = 0.065 if is_premium else 0.105
-        profit_after_tax = int(opportunity.profit - (opportunity.bm_price * tax_rate))
+        # Log to debug log if enabled
         if self.debug_enabled:
-            self.opportunity_batch_debug_log.appendleft(f"[{datetime.now().strftime('%H:%M:%S')}] New opportunity: {opportunity.item_name} in {opportunity.city} - Profit: {profit_after_tax:,}")
+            is_premium = self.premium_var.get()
+            tax_rate = 0.065 if is_premium else 0.105
+            profit_after_tax = int(opportunity.profit - (opportunity.bm_price * tax_rate))
+            self.opportunity_batch_debug_log.appendleft(
+                f"[{datetime.now().strftime('%H:%M:%S')}] New opportunity: "
+                f"{opportunity.item_name} in {opportunity.city} - Profit: {profit_after_tax:,}"
+            )
         
+        # Schedule batch processing if not already scheduled
         if not self._update_scheduled:
             self._update_scheduled = True
-            # Schedule the update after 400ms to allow batching
-            self._update_job_id = self.root.after(400, self._process_opportunity_batch)
-        self.root.after(0, self._update_results_display)
+            # Use a shorter delay for better responsiveness (reduced from 400ms to 100ms)
+            self._update_job_id = self.root.after(100, self._process_opportunity_batch)
+            
+        # Schedule immediate UI update for better responsiveness
+        if not hasattr(self, '_ui_update_scheduled') or not self._ui_update_scheduled:
+            self._ui_update_scheduled = True
+            self.root.after(50, self._update_ui_after_delay)
+
+    def _update_ui_after_delay(self):
+        """Update the UI with a small delay to prevent freezing."""
+        self._update_results_display()
+        self._ui_update_scheduled = False
 
     def _process_opportunity_batch(self):
         """Processes the batch of new opportunities and updates the UI."""
-        batch_size = len(self.opportunity_batch)
-        logger.info(f"Processing batch of {batch_size} opportunities.")
-        # Log to debug log
-        self.opportunity_batch_debug_log.appendleft(f"[{datetime.now().strftime('%H:%M:%S')}] Processing batch of {batch_size} opportunities")
-        
-        # Temporary debug: print to console to see if opportunities are being processed
-        print(f"[DEBUG] Processing {batch_size} opportunities. Total opportunities before: {len(self.flip_opportunities)}")
+        try:
+            batch_size = len(self.opportunity_batch)
+            if batch_size == 0:
+                return
+                
+            if self.debug_enabled:
+                logger.info(f"Processing batch of {batch_size} opportunities.")
+                self.opportunity_batch_debug_log.appendleft(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] Processing {batch_size} opportunities. "
+                    f"Total before: {len(self.flip_opportunities)}"
+                )
 
-        if self.opportunity_batch:
-            # Use a dictionary for faster lookups to update existing items
-            existing_flips = {
-                (opp.item_name, opp.city, opp.bm_quality): opp
-                for opp in self.flip_opportunities
-            }
+            # Process batch
+            if self.opportunity_batch:
+                # Use a dictionary for faster lookups to update existing items
+                existing_flips = {}
+                
+                # First add all existing opportunities
+                for opp in self.flip_opportunities:
+                    key = (opp.item_name, opp.city, opp.bm_quality)
+                    existing_flips[key] = opp
+                
+                # Then update with new opportunities
+                while self.opportunity_batch:
+                    opportunity = self.opportunity_batch.popleft()
+                    key = (opportunity.item_name, opportunity.city, opportunity.bm_quality)
+                    existing_flips[key] = opportunity
+                
+                # Convert back to list
+                self.flip_opportunities = list(existing_flips.values())
 
-            while self.opportunity_batch:
-                opportunity = self.opportunity_batch.popleft()
-                key = (opportunity.item_name, opportunity.city, opportunity.bm_quality)
-                existing_flips[key] = opportunity
+            # Calculate profit after tax for sorting (once)
+            is_premium = self.premium_var.get()
+            tax_rate = 0.065 if is_premium else 0.105
             
-            self.flip_opportunities = list(existing_flips.values())
+            # Single sort operation with optimized key function
+            current_time = datetime.now(timezone.utc)
+            min_time = datetime.min.replace(tzinfo=timezone.utc)
+            
+            def sort_key(opp):
+                # Time since update in minutes (negative for descending)
+                time_since_update = -int((current_time - (opp.last_update if opp.last_update else min_time)).total_seconds() / 60)
+                # Profit after tax (negative for descending)
+                profit = -int((opp.profit) - (opp.bm_price * tax_rate))
+                return (time_since_update, profit)
+            
+            # Sort and limit
+            self.flip_opportunities.sort(key=sort_key)
+            
+            # Only keep the most recent flips to maintain performance
+            if len(self.flip_opportunities) > self.MAX_OPPORTUNITIES:
+                self.flip_opportunities = self.flip_opportunities[:self.MAX_OPPORTUNITIES]
 
-        # Update status bar to give feedback
-        now = datetime.now().strftime("%H:%M:%S")
-        self.status_var.set(f"Processed {batch_size} updates at {now}. Displaying {len(self.flip_opportunities)} flips.")
-
-        # Prune the list to keep it performant
-        is_premium = self.premium_var.get()
-        tax_rate = 0.065 if is_premium else 0.105
-        self.flip_opportunities.sort(key=lambda opp: int((opp.profit) - (opp.bm_price * tax_rate)), reverse=True)
-        self.flip_opportunities = self.flip_opportunities[:self.MAX_OPPORTUNITIES]
-
-        # Re-sort and update the display. Always do this to reflect changes or an empty batch.
-        self.sort_by_column(self.sort_column, self.sort_reverse, toggle=False)
-        
-        # Temporary debug: print to console to see final count
-        print(f"[DEBUG] After processing: {len(self.flip_opportunities)} total opportunities")
-        
-        # Allow the next update to be scheduled
-        self._update_scheduled = False
-        self._update_job_id = None
-        
-        # Force immediate UI update
-        self._update_results_display()
+            # Update status bar
+            now = datetime.now().strftime("%H:%M:%S")
+            self.status_var.set(f"Processed {batch_size} updates at {now}. Displaying {len(self.flip_opportunities)} flips.")
+            
+            # Update display
+            self._update_results_display()
+            
+        except Exception as e:
+            logger.error(f"Error in _process_opportunity_batch: {e}")
+            if self.debug_enabled:
+                import traceback
+                self.opportunity_batch_debug_log.appendleft(
+                    f"[ERROR] {datetime.now().strftime('%H:%M:%S')} {str(e)}\n{traceback.format_exc()}"
+                )
+        finally:
+            # Always reset these flags, even if there was an error
+            self._update_scheduled = False
+            self._update_job_id = None
 
     def sort_by_column(self, col, reverse, toggle=True):
         """Sort treeview by a column."""
@@ -2553,6 +2595,7 @@ class RatFlipperGUI:
             'Sell Price': 'bm_price',
             'Qty': 'quantity',
             'Volume': 'volume',
+            'Price Age': 'price_age',
             'Done': 'flip_id', # To sort by completed status
         }
         
@@ -2564,7 +2607,7 @@ class RatFlipperGUI:
                 self.sort_reverse = not reverse
             else:
                 self.sort_column = col
-                self.sort_reverse = reverse
+                self.sort_reverse = False  # Default to ascending for new columns
         
         # Sort the data
         try:
@@ -2580,10 +2623,16 @@ class RatFlipperGUI:
             # Special handling for 'Status'/'Done'
             elif data_key == 'flip_id':
                 self.flip_opportunities.sort(key=lambda opp: opp.flip_id in self.completed_flips, reverse=self.sort_reverse)
+            elif col == 'Price Age':
+                # Sort by the maximum age between BM and city prices (smallest first)
+                self.flip_opportunities.sort(key=lambda opp: max(
+                    (datetime.now(timezone.utc) - self.flip_detector.bm_price_data.get((opp.item_name, opp.bm_quality), {}).get('Black Market', {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds(),
+                    (datetime.now(timezone.utc) - self.flip_detector.city_price_data.get(opp.item_name, {}).get(opp.city, {}).get(opp.city_quality, {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds()
+                ), reverse=not self.sort_reverse)
             elif data_key:
                 self.flip_opportunities.sort(key=lambda opp: getattr(opp, data_key), reverse=self.sort_reverse)
             else:
-                 return # Column not sortable
+                return  # Column not sortable
 
         except AttributeError as e:
             logger.error(f"Cannot sort by attribute '{data_key}': {e}")
@@ -2593,7 +2642,7 @@ class RatFlipperGUI:
         for c in self.tree['columns']:
             self.tree.heading(c, text=c)  # Reset all headers
             
-        arrow = ' ▲' if self.sort_reverse else ' ▼'
+        arrow = ' ▼' if self.sort_reverse else ' ▲'
         self.tree.heading(col, text=col + arrow)
         
         # Schedule UI update in the main thread
@@ -3357,7 +3406,11 @@ class RatFlipperGUI:
                                     path_steps.append(f"T{tier}.{step}")
                                 path_str = f"T{tier}.{from_enchant} ({city}) → T{tier}.{to_enchant}"
                                 total_cost = min_from_price + total_enchant_cost
-                                profit = bm_data['buy_price'] - total_cost
+                                # Apply premium tax rate to the profit calculation
+                                is_premium = self.premium_var.get()
+                                tax_rate = 0.065 if is_premium else 0.105
+                                profit_before_tax = bm_data['buy_price'] - total_cost
+                                profit = int(profit_before_tax - (bm_data['buy_price'] * tax_rate))
                                 roi = (profit / total_cost * 100) if total_cost else 0
                                 display_name = self.item_manager.get_display_name(from_item_id) if base else bm_item_id
                                 def format_large(n):
@@ -3457,9 +3510,30 @@ class RatFlipperGUI:
     def sort_enchanting_by_column(self, col, reverse, toggle=True):
         # Get all rows from the treeview
         rows = [(self.enchanting_tree.set(k, col), k) for k in self.enchanting_tree.get_children('')]
+        
         def safe_str(val):
             return str(val) if not isinstance(val, dict) else ''
-        if col == 'Total Profit' or col == 'Enchant Cost' or col == 'BM Price':
+            
+        def get_price_age_sort_key(row):
+            # Extract the price age string (e.g., "B5m/R10m")
+            price_age_str = safe_str(row[0])
+            if not price_age_str or not ('B' in price_age_str and 'R' in price_age_str):
+                return float('inf')  # Put invalid formats at the end
+                
+            try:
+                # Extract BM and city ages (e.g., "5m" and "10m" from "B5m/R10m")
+                bm_part, city_part = price_age_str.replace('B', '').split('/R')
+                bm_age = int(bm_part.replace('m', '')) if 'm' in bm_part else 0
+                city_age = int(city_part.replace('m', '')) if 'm' in city_part else 0
+                # Return the maximum age (so newest will be first when sorted in ascending order)
+                return max(bm_age, city_age)
+            except (ValueError, AttributeError):
+                return float('inf')  # Put invalid formats at the end
+        
+        if col == 'Price Age':
+            # Sort by price age with newest (smallest age) first by default
+            rows.sort(key=lambda t: get_price_age_sort_key(t), reverse=not reverse)
+        elif col == 'Total Profit' or col == 'Enchant Cost' or col == 'BM Price':
             rows.sort(key=lambda t: float(safe_str(t[0]).replace(',', '').replace('N/A', '0')), reverse=not reverse)
         elif col == 'ROI':
             rows.sort(key=lambda t: float(safe_str(t[0]).replace('%', '').replace('N/A', '0')), reverse=not reverse)
@@ -3468,6 +3542,7 @@ class RatFlipperGUI:
             rows.sort(key=lambda t: datetime.strptime(safe_str(t[0]), '%Y-%m-%d %H:%M:%S') if safe_str(t[0]) else datetime.min, reverse=not reverse)
         else:
             rows.sort(reverse=not reverse)
+            
         # Rearrange items in the treeview
         for index, (val, k) in enumerate(rows):
             self.enchanting_tree.move(k, '', index)
