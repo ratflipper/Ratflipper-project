@@ -991,7 +991,7 @@ class RatFlipperGUI:
         self.enchanting_source_city = tk.StringVar(value="All Cities")
         print("✅ Main window created")
         
-        self.MAX_OPPORTUNITIES = 500
+        self.MAX_OPPORTUNITIES = 300
         # State and managers (to be filled in next chunks)
         self.current_theme = 'dark'  # Always use dark theme
         self.current_font_size = 12
@@ -1364,7 +1364,7 @@ class RatFlipperGUI:
         discord_btn.pack(fill="x", padx=8, pady=2)
         
         # Support project button
-        support_btn = ctk.CTkButton(parent, text="❤️ Support Project", command=lambda: self.open_url("https://foxflipper.gumroad.com/l/puuwj?_gl=1*nyflux*_ga*MTk5MDYzMTg3OS4xNzUwNDkwMDYy*_ga_6LJN6D94N6*czE3NTA1OTEyNTYkbzEyJGcxJHQxNzUwNTkyNDQ0JGo0MyRsMCRoMA.."), height=28)
+        support_btn = ctk.CTkButton(parent, text="❤️ Support Project", command=lambda: self.open_url("https://ko-fi.com/ratflipper"), height=28)
         support_btn.pack(fill="x", padx=8, pady=2)
         
         # Optionally, add more flip-related controls here
@@ -2497,13 +2497,13 @@ class RatFlipperGUI:
         # Schedule batch processing if not already scheduled
         if not self._update_scheduled:
             self._update_scheduled = True
-            # Use a shorter delay for better responsiveness (reduced from 400ms to 100ms)
-            self._update_job_id = self.root.after(100, self._process_opportunity_batch)
+            # Use a longer delay for better performance (increased from 100ms to 200ms)
+            self._update_job_id = self.root.after(200, self._process_opportunity_batch)
             
-        # Schedule immediate UI update for better responsiveness
+        # Schedule UI update with longer delay for better performance
         if not hasattr(self, '_ui_update_scheduled') or not self._ui_update_scheduled:
             self._ui_update_scheduled = True
-            self.root.after(50, self._update_ui_after_delay)
+            self.root.after(100, self._update_ui_after_delay)
 
     def _update_ui_after_delay(self):
         """Update the UI with a small delay to prevent freezing."""
@@ -2667,7 +2667,7 @@ class RatFlipperGUI:
     def show_log_window(self, event: object = None) -> None:
         """Show the debug/log window with multiple tabs, including filter debug and test item."""
         # Enable debug logging when window opens
-        self.debug_enabled = True
+        self.debug_enabled = False
         self.debug_window_open = True
         
         log_win = tk.Toplevel(self.root)
