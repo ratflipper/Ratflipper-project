@@ -42,8 +42,329 @@ if platform.system() == "Windows":
 import wave
 import struct
 import urllib.parse
+import math
 from customtkinter import CTkTabview
 
+# --- Loading Animation Class ---
+
+class LoadingAnimation:
+    """Beautiful loading animation with fade effects"""
+    def __init__(self, parent, on_complete=None):
+        self.parent = parent
+        self.on_complete = on_complete
+        self.loading_window = None
+        self.current_alpha = 0.0
+        self.animation_step = 0
+        self.animation_running = False
+        
+    def show_loading_screen(self):
+        """Create and show the loading screen"""
+        # Create loading window
+        self.loading_window = tk.Toplevel(self.parent)
+        self.loading_window.title("Loading...")
+        self.loading_window.geometry("800x500")
+        self.loading_window.configure(bg="#181c24")
+        self.loading_window.attributes('-topmost', True)
+        self.loading_window.overrideredirect(True)  # Remove window decorations
+        
+        # Center the window
+        self.center_window(self.loading_window, 800, 500)
+        
+        # Create main frame with glassmorphism effect
+        main_frame = ctk.CTkFrame(
+            self.loading_window, 
+            fg_color="#232946", 
+            corner_radius=24, 
+            border_width=2, 
+            border_color="#00d4ff"
+        )
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Create content frame
+        content_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=40, pady=40)
+        
+        # App icon with glow effect
+        self.icon_label = ctk.CTkLabel(
+            content_frame, 
+            text="🦁", 
+            font=("Segoe UI Emoji", 72),
+            text_color="#00d4ff"
+        )
+        self.icon_label.pack(pady=(40, 20))
+        
+        # Start pulsing animation for icon
+        self.pulse_icon()
+        
+        # Welcome text (will fade out)
+        self.welcome_label = ctk.CTkLabel(
+            content_frame,
+            text="Welcome",
+            font=("Segoe UI", 36, "bold"),
+            text_color="#f8f8f2"
+        )
+        self.welcome_label.pack(pady=10)
+        
+        # App name text (will fade in)
+        self.app_label = ctk.CTkLabel(
+            content_frame,
+            text="Rat Flipper Pro",
+            font=("Segoe UI", 28, "bold"),
+            text_color="#00d4ff"
+        )
+        self.app_label.pack(pady=10)
+        
+        # Subtitle
+        self.subtitle_label = ctk.CTkLabel(
+            content_frame,
+            text="Standalone Edition",
+            font=("Segoe UI", 16),
+            text_color="#888888"
+        )
+        self.subtitle_label.pack(pady=5)
+        
+        # Loading bar
+        self.progress_frame = ctk.CTkFrame(content_frame, fg_color="transparent", height=8)
+        self.progress_frame.pack(fill="x", padx=50, pady=(30, 10))
+        self.progress_frame.pack_propagate(False)
+        
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
+        self.progress_bar.pack(fill="x", padx=10, pady=10)
+        self.progress_bar.set(0)
+        
+        # Configure progress bar colors
+        self.progress_bar.configure(
+            progress_color="#00d4ff",
+            fg_color="#232946",
+            border_color="#00d4ff"
+        )
+        
+        # Status text
+        self.status_label = ctk.CTkLabel(
+            content_frame,
+            text="Initializing...",
+            font=("Segoe UI", 14),
+            text_color="#00d4ff"
+        )
+        self.status_label.pack(pady=10)
+        
+        # Start background animation
+        self.start_background_animation()
+        
+        # Start animation
+        self.start_animation()
+        
+    def center_window(self, window, width, height):
+        """Center the window on screen"""
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        window.geometry(f"{width}x{height}+{x}+{y}")
+        
+    def start_background_animation(self):
+        """Start subtle background color animation"""
+        if not self.animation_running:
+            return
+            
+        def animate_bg(phase=0):
+            if not self.animation_running or not self.loading_window:
+                return
+                
+            # Subtle color shift in the background
+            intensity = 0.1 + 0.05 * math.sin(phase)
+            
+            # Shift the background color slightly
+            r = int(35 + (5 * intensity))
+            g = int(41 + (5 * intensity))
+            b = int(70 + (10 * intensity))
+            
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            
+            try:
+                if self.loading_window:
+                    self.loading_window.configure(bg=color)
+            except:
+                pass
+                
+            # Continue animation
+            self.parent.after(200, lambda: animate_bg(phase + 0.1))
+            
+        animate_bg()
+        
+    def start_animation(self):
+        """Start the loading animation sequence"""
+        self.animation_running = True
+        self.animation_step = 0
+        self.current_alpha = 0.0
+        self.animate_step()
+        
+    def animate_step(self):
+        """Animate each step of the loading sequence"""
+        if not self.animation_running:
+            return
+            
+        step = self.animation_step
+        
+        if step == 0:
+            # Step 0: Fade in welcome text
+            self.fade_in_text(self.welcome_label, "Welcome", 0.05, self.next_step)
+            
+        elif step == 1:
+            # Step 1: Hold welcome text
+            self.status_label.configure(text="Loading components...")
+            self.progress_bar.set(0.2)
+            self.parent.after(1000, self.next_step)
+            
+        elif step == 2:
+            # Step 2: Fade out welcome, fade in app name
+            self.fade_out_text(self.welcome_label, 0.03, lambda: self.fade_in_text(self.app_label, "Rat Flipper Pro", 0.03, self.next_step))
+            
+        elif step == 3:
+            # Step 3: Show subtitle
+            self.status_label.configure(text="Connecting to servers...")
+            self.progress_bar.set(0.4)
+            self.parent.after(800, self.next_step)
+            
+        elif step == 4:
+            # Step 4: Loading progress
+            self.status_label.configure(text="Loading market data...")
+            self.progress_bar.set(0.6)
+            self.parent.after(600, self.next_step)
+            
+        elif step == 5:
+            # Step 5: Final loading
+            self.status_label.configure(text="Preparing interface...")
+            self.progress_bar.set(0.8)
+            self.parent.after(500, self.next_step)
+            
+        elif step == 6:
+            # Step 6: Complete
+            self.status_label.configure(text="Ready!")
+            self.progress_bar.set(1.0)
+            self.parent.after(300, self.finish_loading)
+            
+    def fade_in_text(self, label, text, speed, callback):
+        """Fade in text with specified speed"""
+        label.configure(text=text)
+        self.current_alpha = 0.0
+        
+        def fade():
+            if self.current_alpha < 1.0 and self.animation_running:
+                self.current_alpha += speed
+                # Create color with alpha
+                color = self.interpolate_color("#000000", "#f8f8f2", self.current_alpha)
+                label.configure(text_color=color)
+                self.parent.after(20, fade)
+            else:
+                if callback:
+                    callback()
+                    
+        fade()
+        
+    def fade_out_text(self, label, speed, callback):
+        """Fade out text with specified speed"""
+        self.current_alpha = 1.0
+        
+        def fade():
+            if self.current_alpha > 0.0 and self.animation_running:
+                self.current_alpha -= speed
+                # Create color with alpha
+                color = self.interpolate_color("#000000", "#f8f8f2", self.current_alpha)
+                label.configure(text_color=color)
+                self.parent.after(20, fade)
+            else:
+                if callback:
+                    callback()
+                    
+        fade()
+        
+    def interpolate_color(self, color1, color2, factor):
+        """Interpolate between two colors"""
+        # Clamp factor to valid range [0, 1]
+        factor = max(0.0, min(1.0, factor))
+        
+        # Convert hex to RGB
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            
+        rgb1 = hex_to_rgb(color1)
+        rgb2 = hex_to_rgb(color2)
+        
+        # Interpolate
+        r = int(rgb1[0] + (rgb2[0] - rgb1[0]) * factor)
+        g = int(rgb1[1] + (rgb2[1] - rgb1[1]) * factor)
+        b = int(rgb1[2] + (rgb2[2] - rgb1[2]) * factor)
+        
+        # Clamp RGB values to valid range [0, 255]
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        
+        return f"#{r:02x}{g:02x}{b:02x}"
+        
+    def next_step(self):
+        """Move to next animation step"""
+        self.animation_step += 1
+        self.animate_step()
+        
+    def finish_loading(self):
+        """Finish loading animation and close loading window"""
+        self.animation_running = False
+        if self.loading_window:
+            # Fade out the entire loading window
+            self.fade_out_window()
+            
+        # Call completion callback if provided
+        if self.on_complete:
+            self.parent.after(100, self.on_complete)
+            
+    def pulse_icon(self):
+        """Create a pulsing effect for the icon"""
+        if not self.animation_running or not self.icon_label:
+            return
+            
+        def pulse(phase=0):
+            if not self.animation_running or not self.icon_label:
+                return
+                
+            # Create pulsing effect with sine wave
+            intensity = 0.3 + 0.7 * abs(math.sin(phase))
+            
+            # Interpolate between dark and bright blue
+            r = int(0 + (0 * intensity))
+            g = int(212 + (43 * intensity))
+            b = int(255 + (0 * intensity))
+            
+            color = f"#{r:02x}{g:02x}{b:02x}"
+            self.icon_label.configure(text_color=color)
+            
+            # Continue pulsing
+            self.parent.after(100, lambda: pulse(phase + 0.2))
+            
+        pulse()
+        
+    def fade_out_window(self):
+        """Fade out the loading window"""
+        if not self.loading_window:
+            return
+            
+        def fade():
+            if self.loading_window:
+                try:
+                    current_alpha = self.loading_window.attributes('-alpha')
+                    if current_alpha > 0.0:
+                        self.loading_window.attributes('-alpha', current_alpha - 0.1)
+                        self.parent.after(30, fade)
+                    else:
+                        self.loading_window.destroy()
+                        self.loading_window = None
+                except:
+                    # Window might have been destroyed
+                    pass
+                    
+        fade()
 
 # Configure logging for production
 logging.basicConfig(
@@ -851,6 +1172,9 @@ class AnimatedButton(ctk.CTkButton):
         r, g, b = colorsys.hls_to_rgb(h, l, s)
         return '#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255))
     def _interpolate_color(self, c1, c2, t):
+        # Clamp t to valid range [0, 1]
+        t = max(0.0, min(1.0, t))
+        
         def hex_to_rgb(h):
             if isinstance(h, str) and h.startswith('#'):
                 return tuple(int(h[i:i+2], 16) for i in (1, 3, 5))
@@ -860,6 +1184,12 @@ class AnimatedButton(ctk.CTkButton):
         r = int(r1 + (r2 - r1) * t)
         g = int(g1 + (g2 - g1) * t)
         b = int(b1 + (b2 - b1) * t)
+        
+        # Clamp RGB values to valid range [0, 255]
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        
         return '#%02x%02x%02x' % (r, g, b)
     def _ripple(self, event):
         if self._ripple_canvas:
@@ -986,6 +1316,26 @@ class RatFlipperGUI:
         self.root.title("Rat Flipper Pro - Standalone Edition")
         self.root.geometry("1800x1000")
         self.root.minsize(1500, 800)
+        
+        # Show loading animation
+        print("🎬 Starting loading animation...")
+        
+        def on_loading_complete():
+            self.root.deiconify()  # Make sure window is visible
+            self.root.lift()  # Bring to front
+            self.root.focus_force()  # Force focus
+            print("🪟 Main window should now be visible!")
+            
+            # Start the mainloop to run the GUI
+            print("🔄 Starting mainloop...")
+            self.root.mainloop()
+            print("✅ Mainloop finished")
+        
+        self.loading_animation = LoadingAnimation(self.root, on_loading_complete)
+        self.loading_animation.show_loading_screen()
+        
+        # Hide main window during loading
+        self.root.withdraw()
         # Initialize enchanting variables after root exists
         self.enchanting_enabled = tk.BooleanVar(value=False)
         self.enchanting_source_city = tk.StringVar(value="All Cities")
@@ -1030,6 +1380,13 @@ class RatFlipperGUI:
         # Performance optimization: disable debug logging by default
         self.debug_enabled = False
         self.debug_window_open = False
+        
+        # Notification settings
+        self.notifications_enabled = tk.BooleanVar(value=True)
+        self.notification_min_profit = tk.StringVar(value="200000")
+        self.notification_cooldown_var = tk.StringVar(value="10")
+        self.last_notification_time = 0  # Track last notification time
+        self.active_notification = None  # Track active notification window
         self.load_config()
         
         # Auto-load enchanting prices
@@ -1075,16 +1432,7 @@ class RatFlipperGUI:
         self.schedule_auto_enchanting_scan()
         print("🚀 Rat Flipper Pro initialization complete!")
         
-        # Ensure the window is visible and on top
-        self.root.deiconify()  # Make sure window is visible
-        self.root.lift()  # Bring to front
-        self.root.focus_force()  # Force focus
-        print("🪟 Main window should now be visible!")
-        
-        # Start the mainloop to run the GUI
-        print("🔄 Starting mainloop...")
-        self.root.mainloop()
-        print("✅ Mainloop finished")
+        # Loading animation will handle showing the main window when complete
 
     def create_ui(self):
         # Configure grid for 2-column layout: sidebar (left) and main content (right)
@@ -1342,6 +1690,39 @@ class RatFlipperGUI:
         divider2 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
         divider2.pack(fill="x", padx=8, pady=6)
         
+        # Notification settings section
+        notification_label = ctk.CTkLabel(parent, text="🔔 Notifications", font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
+        notification_label.pack(pady=4)
+        
+        # Notification toggle
+        self.notifications_enabled = tk.BooleanVar(value=True)
+        notification_toggle = ctk.CTkCheckBox(parent, text="Enable Desktop Notifications", variable=self.notifications_enabled, command=self.toggle_notifications)
+        notification_toggle.pack(fill="x", padx=8, pady=2)
+        
+        # Minimum profit threshold for notifications
+        profit_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        profit_frame.pack(fill="x", padx=8, pady=4)
+        
+        ctk.CTkLabel(profit_frame, text="Min Profit Alert:", font=MODERN_FONT).pack(side="left")
+        self.notification_min_profit = tk.StringVar(value="200000")
+        profit_entry = ctk.CTkEntry(profit_frame, textvariable=self.notification_min_profit, width=120, font=MODERN_FONT)
+        profit_entry.pack(side="left", padx=(8, 4))
+        ctk.CTkLabel(profit_frame, text="silver", font=MODERN_FONT, text_color="#888888").pack(side="left")
+        
+        # Cooldown setting
+        cooldown_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        cooldown_frame.pack(fill="x", padx=8, pady=4)
+        
+        ctk.CTkLabel(cooldown_frame, text="Notification Cooldown:", font=MODERN_FONT).pack(side="left")
+        self.notification_cooldown_var = tk.StringVar(value="10")
+        cooldown_entry = ctk.CTkEntry(cooldown_frame, textvariable=self.notification_cooldown_var, width=80, font=MODERN_FONT)
+        cooldown_entry.pack(side="left", padx=(8, 4))
+        ctk.CTkLabel(cooldown_frame, text="seconds", font=MODERN_FONT, text_color="#888888").pack(side="left")
+        
+        # --- Divider ---
+        divider2_5 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
+        divider2_5.pack(fill="x", padx=8, pady=6)
+        
         # Flip management controls
         flips_label = ctk.CTkLabel(parent, text="🦁 Flip Management", font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
         flips_label.pack(pady=4)
@@ -1350,6 +1731,8 @@ class RatFlipperGUI:
         export_btn.pack(fill="x", padx=8, pady=2)
         clear_btn = ctk.CTkButton(parent, text="🗑️ Clear All Flips", command=self.clear_results, height=28)
         clear_btn.pack(fill="x", padx=8, pady=2)
+        reset_sort_btn = ctk.CTkButton(parent, text="🔄 Reset Sort", command=self.reset_sort, height=28)
+        reset_sort_btn.pack(fill="x", padx=8, pady=2)
         
         # --- Divider ---
         divider3 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
@@ -1548,10 +1931,116 @@ class RatFlipperGUI:
         self.total_profit_label.configure(text=f"Total Profit: {total_profit:,}")
         self.avg_profit_label.configure(text=f"Average Profit: {avg_profit:,.0f}")
 
+    def change_analytics_period(self, period):
+        """Change the analytics time period and refresh the display."""
+        self.analytics_time_period.set(period)
+        self._highlight_analytics_button(period)
+        self.refresh_analytics_tab()
+    
+    def _highlight_analytics_button(self, active_period):
+        """Highlight the active time period button."""
+        periods = ["Week", "Month", "Year", "All Time"]
+        for period in periods:
+            btn = getattr(self, f'analytics_btn_{period.lower().replace(" ", "_")}', None)
+            if btn:
+                if period == active_period:
+                    btn.configure(bg="#00d4ff", fg="#000000")
+                else:
+                    btn.configure(bg="#232946", fg="#ffffff")
+    
+    def _get_filtered_flips_by_period(self, period):
+        """Get flips filtered by the selected time period."""
+        if not self.completed_flips_history:
+            return []
+        
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        
+        if period == "Week":
+            cutoff_date = now - timedelta(days=7)
+        elif period == "Month":
+            cutoff_date = now - timedelta(days=30)
+        elif period == "Year":
+            cutoff_date = now - timedelta(days=365)
+        else:  # All Time
+            return self.completed_flips_history
+        
+        filtered_flips = []
+        for flip in self.completed_flips_history:
+            try:
+                flip_time = datetime.strptime(flip['time'], '%Y-%m-%d %H:%M:%S')
+                if flip_time >= cutoff_date:
+                    filtered_flips.append(flip)
+            except (ValueError, KeyError):
+                # Skip invalid entries
+                continue
+        
+        return filtered_flips
+    
+    def _calculate_analytics_stats(self, filtered_flips):
+        """Calculate detailed statistics for the filtered flips."""
+        if not filtered_flips:
+            return {
+                'total_profit': 0,
+                'flip_count': 0,
+                'avg_profit': 0,
+                'max_profit': 0,
+                'min_profit': 0,
+                'best_item': '',
+                'best_city': '',
+                'profit_per_day': 0
+            }
+        
+        total_profit = sum(flip['profit'] for flip in filtered_flips)
+        flip_count = len(filtered_flips)
+        avg_profit = total_profit // flip_count if flip_count > 0 else 0
+        
+        profits = [flip['profit'] for flip in filtered_flips]
+        max_profit = max(profits)
+        min_profit = min(profits)
+        
+        # Find best performing item and city
+        item_profits = {}
+        city_profits = {}
+        for flip in filtered_flips:
+            item = flip['item']
+            city = flip['city']
+            item_profits[item] = item_profits.get(item, 0) + flip['profit']
+            city_profits[city] = city_profits.get(city, 0) + flip['profit']
+        
+        best_item = max(item_profits.items(), key=lambda x: x[1])[0] if item_profits else ''
+        best_city = max(city_profits.items(), key=lambda x: x[1])[0] if city_profits else ''
+        
+        # Calculate profit per day
+        if filtered_flips:
+            from datetime import datetime, timedelta
+            times = [datetime.strptime(flip['time'], '%Y-%m-%d %H:%M:%S') for flip in filtered_flips]
+            time_span = max(times) - min(times)
+            days = max(1, time_span.days + 1)  # At least 1 day
+            profit_per_day = total_profit // days
+        else:
+            profit_per_day = 0
+        
+        return {
+            'total_profit': total_profit,
+            'flip_count': flip_count,
+            'avg_profit': avg_profit,
+            'max_profit': max_profit,
+            'min_profit': min_profit,
+            'best_item': best_item,
+            'best_city': best_city,
+            'profit_per_day': profit_per_day
+        }
+
     def refresh_analytics_tab(self):
         """Refreshes the data and graph in the analytics tab."""
         if not hasattr(self, 'analytics_table'):
             return # Tab not initialized yet
+
+        # Get the current time period
+        period = self.analytics_time_period.get()
+        filtered_flips = self._get_filtered_flips_by_period(period)
 
         self.analytics_table.config(state="normal")
         self.analytics_table.delete("1.0", "end")
@@ -1559,12 +2048,25 @@ class RatFlipperGUI:
         self.analytics_table.insert("end", "-"*80+"\n")
         
         total_profit = 0
-        for flip in self.completed_flips_history:
+        for flip in filtered_flips:
             self.analytics_table.insert("end", f"{flip['item'][:28]:30} {flip['city'][:10]:10} {flip['profit']:>10,} {flip['time']:>20}\n")
             total_profit += flip['profit']
         
         self.analytics_table.config(state="disabled")
-        self.analytics_profit_label.config(text=f"Total Profit: {total_profit:,}")
+        
+        # Calculate and update all stats
+        stats = self._calculate_analytics_stats(filtered_flips)
+        
+        self.analytics_profit_label.config(text=f"Total Profit: {stats['total_profit']:,}")
+        self.analytics_flips_count_label.config(text=f"Flips: {stats['flip_count']}")
+        self.analytics_avg_profit_label.config(text=f"Avg Profit: {stats['avg_profit']:,}")
+        self.analytics_profit_per_day_label.config(text=f"Profit/Day: {stats['profit_per_day']:,}")
+        self.analytics_max_profit_label.config(text=f"Max Profit: {stats['max_profit']:,}")
+        
+        # Truncate long item names for display
+        best_item_display = stats['best_item'][:15] + "..." if len(stats['best_item']) > 15 else stats['best_item']
+        self.analytics_best_item_label.config(text=f"Best Item: {best_item_display}")
+        self.analytics_best_city_label.config(text=f"Best City: {stats['best_city']}")
 
         # Redraw matplotlib graph
         for widget in self.analytics_graph_frame.winfo_children():
@@ -1578,9 +2080,9 @@ class RatFlipperGUI:
             import matplotlib.dates as mdates
             from datetime import datetime
 
-            if self.completed_flips_history:
+            if filtered_flips:
                 # Ensure data is sorted by time for a correct cumulative graph
-                sorted_history = sorted(self.completed_flips_history, key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'))
+                sorted_history = sorted(filtered_flips, key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'))
                 times = [datetime.strptime(f['time'], '%Y-%m-%d %H:%M:%S') for f in sorted_history]
                 profits = [f['profit'] for f in sorted_history]
                 cum_profits = [sum(profits[:i+1]) for i in range(len(profits))]
@@ -1588,7 +2090,7 @@ class RatFlipperGUI:
                 
                 fig, ax = plt.subplots(figsize=(6,2.5), dpi=100)
                 ax.plot(times_num, cum_profits, marker='o', color='#00d4ff', linestyle='solid')
-                ax.set_title('Cumulative Profit Over Time', color='#fafafa')
+                ax.set_title(f'Cumulative Profit Over Time ({period})', color='#fafafa')
                 ax.set_xlabel('Time', color='#fafafa')
                 ax.set_ylabel('Profit', color='#fafafa')
                 ax.tick_params(axis='x', colors='#fafafa', rotation=30)
@@ -1760,6 +2262,11 @@ class RatFlipperGUI:
         # Clear table
         for row in self.tree.get_children():
             self.tree.delete(row)
+        
+        # Apply current sort before filtering (without triggering UI update)
+        if hasattr(self, 'sort_column') and hasattr(self, 'sort_reverse'):
+            self._apply_current_sort()
+        
         filtered_opportunities = self._get_filtered_opportunities()
         if self.debug_enabled:
             print(f"[DEBUG] _update_results_display called: displaying {len(filtered_opportunities)} rows out of {len(self.flip_opportunities)} total opportunities.")
@@ -2247,15 +2754,35 @@ class RatFlipperGUI:
                 self.bg_url = cfg.get("bg_url")
                 if self.bg_url:
                     self.set_background_image_from_url(self.bg_url)
-        except Exception:
+                
+                # Load notification settings
+                notifications_enabled = cfg.get("notifications_enabled", True)
+                notification_min_profit = cfg.get("notification_min_profit", "200000")
+                notification_cooldown = cfg.get("notification_cooldown", "10")
+                
+                self.notifications_enabled.set(notifications_enabled)
+                self.notification_min_profit.set(notification_min_profit)
+                self.notification_cooldown_var.set(notification_cooldown)
+                
+                print(f"✅ Loaded notification settings: enabled={notifications_enabled}, min_profit={notification_min_profit}, cooldown={notification_cooldown}s")
+        except Exception as e:
+            print(f"❌ Error loading config: {e}")
+            # Use defaults if config file doesn't exist or is corrupted
             pass
 
     def save_config(self):
         try:
+            config_data = {
+                "bg_url": self.bg_url,
+                "notifications_enabled": self.notifications_enabled.get(),
+                "notification_min_profit": self.notification_min_profit.get(),
+                "notification_cooldown": self.notification_cooldown_var.get()
+            }
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                pyjson.dump({"bg_url": self.bg_url}, f)
-        except Exception:
-            pass
+                pyjson.dump(config_data, f)
+            print("✅ Settings saved successfully")
+        except Exception as e:
+            print(f"❌ Error saving settings: {e}")
 
     def set_background_image_from_url(self, url):
         try:
@@ -2481,6 +3008,9 @@ class RatFlipperGUI:
         if self.debug_enabled:
             logger.info(f"Real-time opportunity detected: {opportunity.item_name} in {opportunity.city}")
         
+        # Check for high profit notification
+        self.check_and_notify_high_profit(opportunity)
+        
         # Add to batch
         self.opportunity_batch.append(opportunity)
         
@@ -2543,26 +3073,19 @@ class RatFlipperGUI:
                 # Convert back to list
                 self.flip_opportunities = list(existing_flips.values())
 
-            # Calculate profit after tax for sorting (once)
-            is_premium = self.premium_var.get()
-            tax_rate = 0.065 if is_premium else 0.105
-            
-            # Single sort operation with optimized key function
-            current_time = datetime.now(timezone.utc)
-            min_time = datetime.min.replace(tzinfo=timezone.utc)
-            
-            def sort_key(opp):
-                # Time since update in minutes (negative for descending)
-                time_since_update = -int((current_time - (opp.last_update if opp.last_update else min_time)).total_seconds() / 60)
-                # Profit after tax (negative for descending)
-                profit = -int((opp.profit) - (opp.bm_price * tax_rate))
-                return (time_since_update, profit)
-            
-            # Sort and limit
-            self.flip_opportunities.sort(key=sort_key)
-            
             # Only keep the most recent flips to maintain performance
             if len(self.flip_opportunities) > self.MAX_OPPORTUNITIES:
+                # Sort by time to keep the most recent flips, then apply user's sort
+                current_time = datetime.now(timezone.utc)
+                min_time = datetime.min.replace(tzinfo=timezone.utc)
+                
+                def time_sort_key(opp):
+                    # Time since update in minutes (negative for descending)
+                    time_since_update = -int((current_time - (opp.last_update if opp.last_update else min_time)).total_seconds() / 60)
+                    return time_since_update
+                
+                # Sort by time to get the most recent flips
+                self.flip_opportunities.sort(key=time_sort_key)
                 self.flip_opportunities = self.flip_opportunities[:self.MAX_OPPORTUNITIES]
 
             # Update status bar
@@ -2583,6 +3106,58 @@ class RatFlipperGUI:
             # Always reset these flags, even if there was an error
             self._update_scheduled = False
             self._update_job_id = None
+
+    def _apply_current_sort(self):
+        """Apply the current sort without triggering UI update or changing sort indicators."""
+        if not hasattr(self, 'sort_column') or not hasattr(self, 'sort_reverse'):
+            return
+            
+        col = self.sort_column
+        reverse = self.sort_reverse
+        
+        # Map column name to data attribute
+        col_map = {
+            'Item': 'item_name',
+            'Quality': 'bm_quality',
+            'Buy City': 'city',
+            'Buy Price': 'city_price',
+            'Sell Price': 'bm_price',
+            'Qty': 'quantity',
+            'Volume': 'volume',
+            'Price Age': 'price_age',
+            'Done': 'flip_id', # To sort by completed status
+        }
+        
+        data_key = col_map.get(col)
+        
+        # Sort the data
+        try:
+            is_premium = self.premium_var.get()
+            tax_rate = 0.065 if is_premium else 0.105
+
+            if col == 'Profit':
+                self.flip_opportunities.sort(key=lambda opp: int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate)), reverse=reverse)
+            elif col == 'Total Profit':
+                self.flip_opportunities.sort(key=lambda opp: opp.quantity * int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate)), reverse=reverse)
+            elif col == 'ROI%':
+                self.flip_opportunities.sort(key=lambda opp: ((int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate))) / opp.city_price * 100) if opp.city_price > 0 else 0, reverse=reverse)
+            # Special handling for 'Status'/'Done'
+            elif data_key == 'flip_id':
+                self.flip_opportunities.sort(key=lambda opp: opp.flip_id in self.completed_flips, reverse=reverse)
+            elif col == 'Price Age':
+                # Sort by the maximum age between BM and city prices (smallest first)
+                self.flip_opportunities.sort(key=lambda opp: max(
+                    (datetime.now(timezone.utc) - self.flip_detector.bm_price_data.get((opp.item_name, opp.bm_quality), {}).get('Black Market', {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds(),
+                    (datetime.now(timezone.utc) - self.flip_detector.city_price_data.get(opp.item_name, {}).get(opp.city, {}).get(opp.city_quality, {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds()
+                ), reverse=not reverse)
+            elif data_key:
+                self.flip_opportunities.sort(key=lambda opp: getattr(opp, data_key), reverse=reverse)
+            else:
+                return  # Column not sortable
+
+        except AttributeError as e:
+            logger.error(f"Cannot sort by attribute '{data_key}': {e}")
+            return
 
     def sort_by_column(self, col, reverse, toggle=True):
         """Sort treeview by a column."""
@@ -2609,34 +3184,8 @@ class RatFlipperGUI:
                 self.sort_column = col
                 self.sort_reverse = False  # Default to ascending for new columns
         
-        # Sort the data
-        try:
-            is_premium = self.premium_var.get()
-            tax_rate = 0.065 if is_premium else 0.105
-
-            if col == 'Profit':
-                self.flip_opportunities.sort(key=lambda opp: int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate)), reverse=self.sort_reverse)
-            elif col == 'Total Profit':
-                self.flip_opportunities.sort(key=lambda opp: opp.quantity * int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate)), reverse=self.sort_reverse)
-            elif col == 'ROI%':
-                self.flip_opportunities.sort(key=lambda opp: ((int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate))) / opp.city_price * 100) if opp.city_price > 0 else 0, reverse=self.sort_reverse)
-            # Special handling for 'Status'/'Done'
-            elif data_key == 'flip_id':
-                self.flip_opportunities.sort(key=lambda opp: opp.flip_id in self.completed_flips, reverse=self.sort_reverse)
-            elif col == 'Price Age':
-                # Sort by the maximum age between BM and city prices (smallest first)
-                self.flip_opportunities.sort(key=lambda opp: max(
-                    (datetime.now(timezone.utc) - self.flip_detector.bm_price_data.get((opp.item_name, opp.bm_quality), {}).get('Black Market', {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds(),
-                    (datetime.now(timezone.utc) - self.flip_detector.city_price_data.get(opp.item_name, {}).get(opp.city, {}).get(opp.city_quality, {}).get('last_update', datetime.min.replace(tzinfo=timezone.utc))).total_seconds()
-                ), reverse=not self.sort_reverse)
-            elif data_key:
-                self.flip_opportunities.sort(key=lambda opp: getattr(opp, data_key), reverse=self.sort_reverse)
-            else:
-                return  # Column not sortable
-
-        except AttributeError as e:
-            logger.error(f"Cannot sort by attribute '{data_key}': {e}")
-            return
+        # Apply the sort
+        self._apply_current_sort()
 
         # Update sort indicators in header
         for c in self.tree['columns']:
@@ -3671,14 +4220,87 @@ class RatFlipperGUI:
 
     def create_analytics_section(self, parent):
         try:
-            self.analytics_table = tk.Text(parent, wrap="none", font=("Consolas", 9), bg="#181c24", fg="#00ff99", height=15)
+            # Time period filter frame
+            filter_frame = tk.Frame(parent, bg="#181c24")
+            filter_frame.pack(fill="x", padx=8, pady=(8, 4))
+            
+            tk.Label(filter_frame, text="Time Period:", font=("Consolas", 10, "bold"), bg="#181c24", fg="#00d4ff").pack(side="left", padx=(0, 10))
+            
+            # Time period variable
+            self.analytics_time_period = tk.StringVar(value="All Time")
+            
+            # Time period buttons
+            time_buttons_frame = tk.Frame(filter_frame, bg="#181c24")
+            time_buttons_frame.pack(side="left")
+            
+            periods = [("Week", "Week"), ("Month", "Month"), ("Year", "Year"), ("All Time", "All Time")]
+            for text, value in periods:
+                btn = tk.Button(
+                    time_buttons_frame, 
+                    text=text, 
+                    command=lambda v=value: self.change_analytics_period(v),
+                    bg="#232946", 
+                    fg="#ffffff", 
+                    font=("Consolas", 9, "bold"),
+                    relief="flat",
+                    bd=0,
+                    padx=12,
+                    pady=4
+                )
+                btn.pack(side="left", padx=2)
+                # Store button reference for highlighting
+                setattr(self, f'analytics_btn_{value.lower().replace(" ", "_")}', btn)
+            
+            # Highlight the default button
+            self._highlight_analytics_button("All Time")
+            
+            # Stats frame
+            stats_frame = tk.Frame(parent, bg="#181c24")
+            stats_frame.pack(fill="x", padx=8, pady=4)
+            
+            # First row of stats
+            stats_row1 = tk.Frame(stats_frame, bg="#181c24")
+            stats_row1.pack(fill="x")
+            
+            # Profit label
+            self.analytics_profit_label = tk.Label(stats_row1, text="Total Profit: 0", font=("Consolas", 11, "bold"), bg="#181c24", fg="#ffeb3b")
+            self.analytics_profit_label.pack(side="left")
+            
+            # Additional stats labels
+            self.analytics_flips_count_label = tk.Label(stats_row1, text="Flips: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_flips_count_label.pack(side="left", padx=(20, 0))
+            
+            self.analytics_avg_profit_label = tk.Label(stats_row1, text="Avg Profit: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_avg_profit_label.pack(side="left", padx=(20, 0))
+            
+            self.analytics_profit_per_day_label = tk.Label(stats_row1, text="Profit/Day: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_profit_per_day_label.pack(side="left", padx=(20, 0))
+            
+            # Second row of stats
+            stats_row2 = tk.Frame(stats_frame, bg="#181c24")
+            stats_row2.pack(fill="x", pady=(4, 0))
+            
+            self.analytics_max_profit_label = tk.Label(stats_row2, text="Max Profit: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_max_profit_label.pack(side="left")
+            
+            self.analytics_best_item_label = tk.Label(stats_row2, text="Best Item: None", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_best_item_label.pack(side="left", padx=(20, 0))
+            
+            self.analytics_best_city_label = tk.Label(stats_row2, text="Best City: None", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_best_city_label.pack(side="left", padx=(20, 0))
+            
+            # Table
+            self.analytics_table = tk.Text(parent, wrap="none", font=("Consolas", 9), bg="#181c24", fg="#00ff99", height=12)
             self.analytics_table.pack(fill="both", expand=True, padx=8, pady=4)
-            self.analytics_profit_label = tk.Label(parent, text="Total Profit: 0", font=("Consolas", 11, "bold"), bg="#181c24", fg="#ffeb3b")
-            self.analytics_profit_label.pack(anchor="w", padx=8, pady=4)
+            
+            # Graph frame
             self.analytics_graph_frame = tk.Frame(parent, bg="#181c24")
             self.analytics_graph_frame.pack(fill="both", expand=True, padx=8, pady=8)
+            
+            # Refresh button
             refresh_btn = tk.Button(parent, text="Refresh", command=self.refresh_analytics_tab, bg="#232946", fg="#00d4ff", font=("Consolas", 9, "bold"))
             refresh_btn.pack(anchor="ne", padx=8, pady=2)
+            
             self.refresh_analytics_tab()
         except Exception as e:
             tk.Label(parent, text=f"Error loading Analytics: {e}", bg="#181c24", fg="#ff4b91", font=("Consolas", 9)).pack(pady=8)
@@ -3691,6 +4313,172 @@ class RatFlipperGUI:
         except Exception as e:
             print(f"❌ Error opening URL: {e}")
     
+    def reset_sort(self):
+        """Reset sort to default (Total Profit, descending)"""
+        self.sort_column = "Total Profit"
+        self.sort_reverse = True
+        self._apply_current_sort()
+        self._update_results_display()
+        
+        # Update sort indicators in header
+        for c in self.tree['columns']:
+            self.tree.heading(c, text=c)  # Reset all headers
+            
+        arrow = ' ▼' if self.sort_reverse else ' ▲'
+        self.tree.heading(self.sort_column, text=self.sort_column + arrow)
+        
+        print("🔄 Sort reset to default (Total Profit, descending)")
+
+    def toggle_notifications(self):
+        """Toggle notifications on/off"""
+        status = "enabled" if self.notifications_enabled.get() else "disabled"
+        print(f"🔔 Desktop notifications {status}")
+    
+    def show_notification(self, title, message, duration=5000):
+        """Show a desktop notification popup"""
+        if not self.notifications_enabled.get():
+            return
+            
+        # Check cooldown to prevent spam
+        current_time = time.time()
+        try:
+            cooldown = int(self.notification_cooldown_var.get())
+        except ValueError:
+            cooldown = 10  # Default fallback
+            
+        if current_time - self.last_notification_time < cooldown:
+            return
+            
+        # Close any existing notification
+        if self.active_notification and self.active_notification.winfo_exists():
+            try:
+                self.active_notification.destroy()
+            except:
+                pass
+            
+        try:
+            # Play notification sound
+            self.play_notification_sound()
+            
+            # Create notification window
+            notification = tk.Toplevel(self.root)
+            notification.title("")
+            notification.geometry("350x120")
+            notification.configure(bg="#232946")
+            
+            # Position in bottom-right corner (fixed position)
+            screen_width = notification.winfo_screenwidth()
+            screen_height = notification.winfo_screenheight()
+            
+            # Calculate position with safety margins
+            notification_width = 350
+            notification_height = 140
+            x = max(10, screen_width - notification_width - 10)  # 20px margin from right
+            y = max(10, screen_height - notification_height - 10)  # 20px margin from bottom
+            
+            notification.geometry(f"{notification_width}x{notification_height}+{x}+{y}")
+            
+            # Make it stay on top
+            notification.attributes('-topmost', True)
+            
+            # Remove window decorations
+            notification.overrideredirect(True)
+            
+            # Create notification content
+            title_label = tk.Label(notification, text=title, font=("Segoe UI", 12, "bold"), 
+                                 bg="#232946", fg="#00d4ff", anchor="w")
+            title_label.pack(fill="x", padx=18, pady=(10, 8))
+            
+            message_label = tk.Label(notification, text=message, font=("Segoe UI", 10), 
+                                   bg="#232946", fg="#ffffff", anchor="w", justify="left")
+            message_label.pack(fill="x", padx=18, pady=(0, 10))
+            
+            # Add close button
+            close_btn = tk.Button(notification, text="×", font=("Segoe UI", 16, "bold"), 
+                                bg="#ff4444", fg="white", bd=0, padx=8, pady=2,
+                                command=lambda: self.close_notification(notification))
+            close_btn.place(x=320, y=5)
+            
+            # Auto-close after duration
+            notification.after(duration, lambda: self.close_notification(notification))
+            
+            # Add hover effect to close button
+            def on_enter(e):
+                close_btn.configure(bg="#ff6666")
+            def on_leave(e):
+                close_btn.configure(bg="#ff4444")
+            
+            close_btn.bind("<Enter>", on_enter)
+            close_btn.bind("<Leave>", on_leave)
+            
+            # Store reference and update time
+            self.active_notification = notification
+            self.last_notification_time = current_time
+            
+            # Bring to front
+            notification.lift()
+            notification.focus_force()
+            
+        except Exception as e:
+            print(f"❌ Error showing notification: {e}")
+    
+    def close_notification(self, notification):
+        """Safely close notification window"""
+        try:
+            if notification and notification.winfo_exists():
+                notification.destroy()
+                if self.active_notification == notification:
+                    self.active_notification = None
+        except:
+            pass
+    
+    def play_notification_sound(self):
+        """Play a notification sound"""
+        try:
+            import winsound
+            # Play Windows system notification sound
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except ImportError:
+            # Fallback for non-Windows systems
+            try:
+                import os
+                os.system("echo -e '\a'")  # Terminal bell
+            except:
+                pass  # Silent fallback
+        except Exception as e:
+            print(f"❌ Error playing notification sound: {e}")
+    
+    def check_and_notify_high_profit(self, opportunity):
+        """Check if opportunity meets notification criteria and show notification"""
+        if not self.notifications_enabled.get():
+            return
+            
+        try:
+            # Get minimum profit threshold
+            min_profit = int(self.notification_min_profit.get())
+        except ValueError:
+            min_profit = 200000  # Default fallback
+            
+        # Calculate profit after tax
+        is_premium = self.premium_var.get()
+        tax_rate = 0.065 if is_premium else 0.105
+        profit_after_tax = int((opportunity.bm_price - opportunity.city_price) - (opportunity.bm_price * tax_rate))
+        
+        if profit_after_tax >= min_profit:
+            # Format the notification
+            title = f"🦁 RatFlipper - High Profit Alert!"
+            
+            item_name = self.item_manager.get_display_name(opportunity.item_name)
+            quality_name = QUALITY_LEVEL_NAMES.get(opportunity.bm_quality, f"Q{opportunity.bm_quality}")
+            
+            message = f"💰 {item_name} ({quality_name})\n"
+            message += f"📍 City: {opportunity.city}\n"
+            message += f"💵 Profit: {profit_after_tax:,} silver\n"
+            message += f"📦 Quantity: {opportunity.quantity}"
+            
+            self.show_notification(title, message)
+            print(f"🔔 Notification sent for {item_name} - {profit_after_tax:,} profit")
+
     def toggle_debug_logging(self):
         """Toggle debug logging on/off"""
         self.debug_enabled = not self.debug_enabled
