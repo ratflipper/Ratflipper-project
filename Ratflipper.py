@@ -63,7 +63,7 @@ class AutoUpdater:
         self.latest_version = None
         self.update_available = False
         self.update_window = None
-        self.enabled = False  # Set to False to disable auto-updater
+        self.enabled = True  # Set to False to disable auto-updater
         
     def check_for_updates(self, parent=None, silent=False):
         """Check for updates on GitHub"""
