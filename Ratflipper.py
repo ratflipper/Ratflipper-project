@@ -44,6 +44,483 @@ import struct
 import urllib.parse
 import math
 from customtkinter import CTkTabview
+import requests
+import zipfile
+import shutil
+import subprocess
+
+# --- Auto Updater Class ---
+
+class AutoUpdater:
+    """GitHub-based auto-updater for Rat Flipper Pro"""
+    
+    def __init__(self, current_version="1.0.0"):
+        self.current_version = current_version
+        # Your actual GitHub repository
+        self.github_repo = "ratflipper/Ratflipper-project"
+        self.github_api_url = f"https://api.github.com/repos/{self.github_repo}/releases/latest"
+        self.download_url = None
+        self.latest_version = None
+        self.update_available = False
+        self.update_window = None
+        self.enabled = False  # Set to False to disable auto-updater
+        
+    def check_for_updates(self, parent=None, silent=False):
+        """Check for updates on GitHub"""
+        if not self.enabled:
+            if not silent:
+                messagebox.showinfo("Updater", "Auto-updater is disabled.")
+            return False
+            
+        try:
+            print(f"🔍 Checking for updates... Current version: {self.current_version}")
+            # Get latest release info from GitHub API
+            response = requests.get(self.github_api_url, timeout=10)
+            print(f"📡 GitHub API response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                release_data = response.json()
+                print(f"📦 Release data: {release_data}")
+                
+                # Extract version and clean it
+                raw_tag = release_data.get('tag_name', '')
+                # Remove 'v' and any leading dots or non-numeric characters
+                cleaned_tag = raw_tag.lstrip('v').lstrip('.')
+                self.latest_version = cleaned_tag if cleaned_tag else '0.0.0'
+                print(f"🏷️ Latest version from GitHub: {self.latest_version} (cleaned from '{raw_tag}')")
+                
+                # Get download URL
+                assets = release_data.get('assets', [])
+                self.download_url = assets[0]['browser_download_url'] if assets else None
+                print(f"📥 Download URL: {self.download_url}")
+                
+                # Compare versions
+                comparison_result = self._compare_versions(self.latest_version, self.current_version)
+                print(f"⚖️ Version comparison: {self.current_version} vs {self.latest_version} = {comparison_result}")
+                
+                if comparison_result > 0:
+                    self.update_available = True
+                    if not silent:
+                        self._show_update_dialog(parent)
+                    return True
+                else:
+                    if not silent:
+                        messagebox.showinfo("Updater", f"You have the latest version! (Current: {self.current_version}, Latest: {self.latest_version})")
+                    return False
+            elif response.status_code == 404:
+                # Repository not found - D
+                if not silent:
+                    messagebox.showinfo("Updater", "GitHub repository not found. Please set up your repository or contact support.")
+                return False
+            else:
+                if not silent:
+                    messagebox.showerror("Update Error", f"Failed to check for updates: {response.status_code}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            if not silent:
+                messagebox.showerror("Update Error", "No internet connection. Cannot check for updates.")
+            return False
+        except Exception as e:
+            print(f"❌ Error checking for updates: {str(e)}")
+            print(f"❌ Error type: {type(e)}")
+            import traceback
+            traceback.print_exc()
+            if not silent:
+                messagebox.showerror("Update Error", f"Error checking for updates: {str(e)}")
+            return False
+    
+    def _compare_versions(self, version1, version2):
+        """Compare two version strings (e.g., '1.2.3' vs '1.2.4')"""
+        try:
+            # Clean version strings - remove any non-numeric characters except dots
+            v1_clean = ''.join(c for c in version1 if c.isdigit() or c == '.')
+            v2_clean = ''.join(c for c in version2 if c.isdigit() or c == '.')
+            
+            # Split and convert to integers, handling empty parts
+            v1_parts = []
+            for part in v1_clean.split('.'):
+                if part.strip():
+                    v1_parts.append(int(part))
+                else:
+                    v1_parts.append(0)
+                    
+            v2_parts = []
+            for part in v2_clean.split('.'):
+                if part.strip():
+                    v2_parts.append(int(part))
+                else:
+                    v2_parts.append(0)
+            
+            # Pad with zeros if needed
+            max_len = max(len(v1_parts), len(v2_parts))
+            v1_parts.extend([0] * (max_len - len(v1_parts)))
+            v2_parts.extend([0] * (max_len - len(v2_parts)))
+            
+            for i in range(max_len):
+                if v1_parts[i] > v2_parts[i]:
+                    return 1
+                elif v1_parts[i] < v2_parts[i]:
+                    return -1
+            return 0
+        except (ValueError, AttributeError) as e:
+            print(f"Error comparing versions '{version1}' and '{version2}': {e}")
+            # If there's an error, assume versions are equal
+            return 0
+    
+    def _get_release_notes(self):
+        """Fetch actual release notes from GitHub"""
+        try:
+            response = requests.get(self.github_api_url, timeout=10)
+            if response.status_code == 200:
+                release_data = response.json()
+                body = release_data.get('body', '')
+                if body:
+                    # Convert markdown to simple text
+                    lines = body.split('\n')
+                    formatted_notes = []
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith('- ') or line.startswith('* '):
+                            formatted_notes.append(line)
+                        elif line.startswith('##'):
+                            formatted_notes.append(f"\n{line.replace('#', '').strip()}")
+                        elif line and not line.startswith('#'):
+                            formatted_notes.append(line)
+                    return '\n'.join(formatted_notes)
+        except Exception as e:
+            print(f"Error fetching release notes: {e}")
+        return None
+    
+    def _show_update_dialog(self, parent):
+        """Show update dialog with skip option"""
+        if self.update_window:
+            self.update_window.destroy()
+            
+        self.update_window = ctk.CTkToplevel(parent)
+        self.update_window.title("Update Available")
+        self.update_window.geometry("600x500")
+        self.update_window.resizable(False, False)
+        self.update_window.attributes('-topmost', True)
+        
+        # Center the window
+        self.update_window.update_idletasks()
+        x = (self.update_window.winfo_screenwidth() // 2) - (600 // 2)
+        y = (self.update_window.winfo_screenheight() // 2) - (500 // 2)
+        self.update_window.geometry(f"600x500+{x}+{y}")
+        
+        # Main frame with gradient-like effect
+        main_frame = ctk.CTkFrame(
+            self.update_window, 
+            fg_color="#1a1d2e", 
+            corner_radius=24, 
+            border_width=2, 
+            border_color="#00d4ff"
+        )
+        main_frame.pack(fill="both", expand=True, padx=16, pady=16)
+        
+        # Header with enhanced styling
+        header_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=24, pady=(24, 16))
+        
+        # App icon and title
+        icon_label = ctk.CTkLabel(
+            header_frame,
+            text="🦁",
+            font=("Segoe UI Emoji", 32),
+            text_color="#00d4ff"
+        )
+        icon_label.pack(side="left", padx=(0, 12))
+        
+        title_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_frame.pack(side="left", fill="x", expand=True)
+        
+        header_label = ctk.CTkLabel(
+            title_frame,
+            text="Update Available",
+            font=("Segoe UI", 28, "bold"),
+            text_color="#ffffff"
+        )
+        header_label.pack(anchor="w")
+        
+        subtitle_label = ctk.CTkLabel(
+            title_frame,
+            text="A new version of Rat Flipper Pro is ready to install",
+            font=("Segoe UI", 14),
+            text_color="#a0aec0"
+        )
+        subtitle_label.pack(anchor="w")
+        
+        # Version info with enhanced styling
+        version_frame = ctk.CTkFrame(main_frame, fg_color="#232946", corner_radius=12)
+        version_frame.pack(fill="x", padx=24, pady=(0, 16))
+        
+        version_header = ctk.CTkLabel(
+            version_frame,
+            text="Version Information",
+            font=("Segoe UI", 16, "bold"),
+            text_color="#ffffff"
+        )
+        version_header.pack(pady=(16, 12), padx=16, anchor="w")
+        
+        # Version comparison
+        version_comparison_frame = ctk.CTkFrame(version_frame, fg_color="transparent")
+        version_comparison_frame.pack(fill="x", padx=16, pady=(0, 16))
+        
+        # Current version
+        current_version_frame = ctk.CTkFrame(version_comparison_frame, fg_color="#1a1d2e", corner_radius=8)
+        current_version_frame.pack(fill="x", pady=(0, 8))
+        
+        ctk.CTkLabel(
+            current_version_frame,
+            text="Current Version",
+            font=("Segoe UI", 12, "bold"),
+            text_color="#a0aec0"
+        ).pack(anchor="w", padx=12, pady=(8, 4))
+        
+        ctk.CTkLabel(
+            current_version_frame,
+            text=self.current_version,
+            font=("Segoe UI", 18, "bold"),
+            text_color="#ffffff"
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+        
+        # Latest version
+        latest_version_frame = ctk.CTkFrame(version_comparison_frame, fg_color="#00d4ff", corner_radius=8)
+        latest_version_frame.pack(fill="x")
+        
+        ctk.CTkLabel(
+            latest_version_frame,
+            text="Latest Version",
+            font=("Segoe UI", 12, "bold"),
+            text_color="#181c24"
+        ).pack(anchor="w", padx=12, pady=(8, 4))
+        
+        ctk.CTkLabel(
+            latest_version_frame,
+            text=self.latest_version,
+            font=("Segoe UI", 18, "bold"),
+            text_color="#181c24"
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+        
+        # Release notes with enhanced styling
+        notes_label = ctk.CTkLabel(
+            main_frame,
+            text="📝 Release Notes",
+            font=("Segoe UI", 16, "bold"),
+            text_color="#ffffff"
+        )
+        notes_label.pack(pady=(0, 8), anchor="w", padx=24)
+        
+        # Scrollable text area for release notes
+        notes_frame = ctk.CTkFrame(main_frame, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
+        notes_frame.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        
+        notes_text = ctk.CTkTextbox(
+            notes_frame,
+            font=("Segoe UI", 12),
+            text_color="#e2e8f0",
+            fg_color="transparent",
+            wrap="word",
+            corner_radius=8
+        )
+        notes_text.pack(fill="both", expand=True, padx=12, pady=12)
+        
+        # Fetch and display actual release notes from GitHub
+        try:
+            release_notes = self._get_release_notes()
+            if release_notes:
+                notes_text.insert("1.0", release_notes)
+            else:
+                notes_text.insert("1.0", "• Bug fixes and performance improvements\n• Enhanced flip detection algorithm\n• New enchanting opportunities feature\n• Improved UI responsiveness\n• Better error handling")
+        except Exception as e:
+            notes_text.insert("1.0", "• Bug fixes and performance improvements\n• Enhanced flip detection algorithm\n• New enchanting opportunities feature\n• Improved UI responsiveness\n• Better error handling")
+        notes_text.configure(state="disabled")
+        
+        # Button frame with enhanced styling
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", padx=24, pady=(0, 24))
+        
+        # Primary action button (Update Now)
+        update_btn = ctk.CTkButton(
+            button_frame,
+            text="🔄 Update Now",
+            command=self._start_update,
+            width=180,
+            height=44,
+            fg_color="#00d4ff",
+            text_color="#181c24",
+            corner_radius=22,
+            font=("Segoe UI", 14, "bold"),
+            hover_color="#00b0cc"
+        )
+        update_btn.pack(side="left", padx=(0, 12))
+        
+        # Secondary action buttons
+        secondary_frame = ctk.CTkFrame(button_frame, fg_color="transparent")
+        secondary_frame.pack(side="right")
+        
+        # Skip button
+        skip_btn = ctk.CTkButton(
+            secondary_frame,
+            text="⏭️ Skip",
+            command=self._skip_update,
+            width=100,
+            height=36,
+            fg_color="#4a5568",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 12),
+            hover_color="#2d3748"
+        )
+        skip_btn.pack(side="left", padx=(0, 8))
+        
+        # Remind later button
+        remind_btn = ctk.CTkButton(
+            secondary_frame,
+            text="⏰ Later",
+            command=self._remind_later,
+            width=100,
+            height=36,
+            fg_color="#2d3748",
+            text_color="#a0aec0",
+            corner_radius=18,
+            font=("Segoe UI", 12),
+            hover_color="#1a202c"
+        )
+        remind_btn.pack(side="left")
+        
+        # Progress bar (hidden initially) with enhanced styling
+        self.progress_bar = ctk.CTkProgressBar(
+            main_frame,
+            progress_color="#00d4ff",
+            fg_color="#2d3748",
+            corner_radius=8
+        )
+        self.progress_bar.pack(fill="x", padx=24, pady=(0, 8))
+        self.progress_bar.set(0)
+        self.progress_bar.pack_forget()
+        
+        # Status label (hidden initially) with enhanced styling
+        self.status_label = ctk.CTkLabel(
+            main_frame,
+            text="",
+            font=("Segoe UI", 12, "bold"),
+            text_color="#00d4ff"
+        )
+        self.status_label.pack(pady=(0, 8))
+        self.status_label.pack_forget()
+    
+    def _start_update(self):
+        """Start the update process"""
+        if not self.download_url:
+            messagebox.showerror("Update Error", "Download URL not available")
+            return
+            
+        # Show progress bar and status
+        self.progress_bar.pack(fill="x", padx=30, pady=(0, 10))
+        self.status_label.pack(pady=(0, 10))
+        
+        # Disable buttons during update
+        for widget in self.update_window.winfo_children():
+            if isinstance(widget, ctk.CTkFrame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ctk.CTkFrame):
+                        for grandchild in child.winfo_children():
+                            if isinstance(grandchild, ctk.CTkButton):
+                                grandchild.configure(state="disabled")
+        
+        # Start update in a separate thread
+        update_thread = threading.Thread(target=self._download_and_install_update)
+        update_thread.daemon = True
+        update_thread.start()
+    
+    def _download_and_install_update(self):
+        """Download and install the update"""
+        try:
+            # Update status
+            self.status_label.configure(text="Downloading update...")
+            self.progress_bar.set(0.1)
+            
+            # Download the update
+            response = requests.get(self.download_url, stream=True, timeout=30)
+            response.raise_for_status()
+            
+            # Get file size for progress calculation
+            total_size = int(response.headers.get('content-length', 0))
+            
+            # Create temp directory
+            temp_dir = Path("temp_update")
+            temp_dir.mkdir(exist_ok=True)
+            
+            # Download file
+            update_file = temp_dir / "rat_flipper_update.zip"
+            downloaded_size = 0
+            
+            with open(update_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+                        if total_size > 0:
+                            progress = 0.1 + (downloaded_size / total_size) * 0.7
+                            self.progress_bar.set(progress)
+            
+            # Extract update
+            self.status_label.configure(text="Installing update...")
+            self.progress_bar.set(0.8)
+            
+            with zipfile.ZipFile(update_file, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Create backup of current version
+            backup_dir = Path("backup")
+            backup_dir.mkdir(exist_ok=True)
+            
+            current_script = Path(__file__)
+            if current_script.exists():
+                shutil.copy2(current_script, backup_dir / f"rat_flipper_backup_{self.current_version}.py")
+            
+            # Replace current file with new version
+            new_script = temp_dir / "Ratflipper.py"
+            if new_script.exists():
+                shutil.copy2(new_script, current_script)
+            
+            # Clean up
+            shutil.rmtree(temp_dir)
+            
+            self.progress_bar.set(1.0)
+            self.status_label.configure(text="Update completed! Restarting...")
+            
+            # Restart the application
+            self.update_window.after(2000, self._restart_application)
+            
+        except Exception as e:
+            self.status_label.configure(text=f"Update failed: {str(e)}")
+            messagebox.showerror("Update Error", f"Failed to update: {str(e)}")
+    
+    def _restart_application(self):
+        """Restart the application"""
+        try:
+            # Close current application
+            self.update_window.destroy()
+            
+            # Restart the script
+            python = sys.executable
+            subprocess.Popen([python, __file__])
+            sys.exit(0)
+        except Exception as e:
+            messagebox.showerror("Restart Error", f"Failed to restart: {str(e)}")
+    
+    def _skip_update(self):
+        """Skip this update"""
+        self.update_window.destroy()
+        messagebox.showinfo("Update Skipped", "Update skipped. You can check for updates again later from the Settings menu.")
+    
+    def _remind_later(self):
+        """Remind later (close dialog)"""
+        self.update_window.destroy()
+        messagebox.showinfo("Reminder Set", "You'll be reminded about this update next time you start the application.")
 
 # --- Loading Animation Class ---
 
@@ -1326,6 +1803,11 @@ class RatFlipperGUI:
             self.root.focus_force()  # Force focus
             print("🪟 Main window should now be visible!")
             
+            # Check for updates on startup (if enabled)
+            if hasattr(self, 'auto_check_updates') and self.auto_check_updates.get():
+                # Delay the update check to allow the app to fully load
+                self.root.after(5000, self.check_for_updates_silent)
+            
             # Start the mainloop to run the GUI
             print("🔄 Starting mainloop...")
             self.root.mainloop()
@@ -1383,6 +1865,10 @@ class RatFlipperGUI:
         
         # Notification settings
         self.notifications_enabled = tk.BooleanVar(value=True)
+        
+        # Auto-updater initialization
+        self.current_version = "1.3.0"  # Current version matching your latest GitHub release
+        self.auto_updater = AutoUpdater(self.current_version)
         self.notification_min_profit = tk.StringVar(value="200000")
         self.notification_cooldown_var = tk.StringVar(value="10")
         self.last_notification_time = 0  # Track last notification time
@@ -1657,109 +2143,477 @@ class RatFlipperGUI:
 
     def create_settings_panel(self, parent):
         """Create settings panel for smaller side window with debug, theme, background, and flip management controls (no premium or min profit)"""
-        # Settings content
-        settings_label = ctk.CTkLabel(parent, text="⚙️ Settings", font=("Segoe UI", 14, "bold"), text_color=ACCENT_COLOR)
-        settings_label.pack(pady=8)
+        # Create scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True)
         
-        # Save settings button
-        save_settings_btn = ctk.CTkButton(parent, text="Save Settings", command=self.save_config, height=30)
-        save_settings_btn.pack(pady=8)
+        # Add animated scroll indicator
+        self.scroll_indicator = ctk.CTkLabel(
+            parent,
+            text="⬇️",
+            font=("Segoe UI", 20),
+            text_color="#00d4ff"
+        )
+        self.scroll_indicator.pack(side="bottom", pady=5)
+        
+        # Animate the scroll indicator
+        def animate_scroll_indicator():
+            if hasattr(self, 'scroll_indicator') and self.scroll_indicator.winfo_exists():
+                current_text = self.scroll_indicator.cget("text")
+                if current_text == "⬇️":
+                    self.scroll_indicator.configure(text="⬇")
+                else:
+                    self.scroll_indicator.configure(text="⬇️")
+                parent.after(800, animate_scroll_indicator)
+        
+        animate_scroll_indicator()
+        
+        # Bind scroll events to hide/show indicator
+        def on_scroll(event):
+            if scrollable_frame._parent_canvas.yview()[1] >= 1.0:  # At bottom
+                self.scroll_indicator.pack_forget()
+            else:
+                self.scroll_indicator.pack(side="bottom", pady=5)
+        
+        scrollable_frame._parent_canvas.bind("<MouseWheel>", on_scroll)
+        scrollable_frame._parent_canvas.bind("<Button-4>", on_scroll)
+        scrollable_frame._parent_canvas.bind("<Button-5>", on_scroll)
+        
+        # Use scrollable_frame as the new parent
+        parent = scrollable_frame
+        # Main settings header with enhanced styling
+        settings_header_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        settings_header_frame.pack(fill="x", padx=8, pady=(0, 8))
+        
+        settings_label = ctk.CTkLabel(
+            settings_header_frame, 
+            text="⚙️ Settings", 
+            font=("Segoe UI", 16, "bold"), 
+            text_color="#00d4ff"
+        )
+        settings_label.pack(pady=12)
+        
+        # Save settings button with enhanced styling
+        save_settings_btn = ctk.CTkButton(
+            settings_header_frame, 
+            text="💾 Save Settings", 
+            command=self.save_config, 
+            height=36,
+            fg_color="#00d4ff",
+            text_color="#181c24",
+            corner_radius=18,
+            font=("Segoe UI", 12, "bold"),
+            hover_color="#00b0cc"
+        )
+        save_settings_btn.pack(pady=(0, 12))
         
         # --- Divider ---
-        divider1 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
-        divider1.pack(fill="x", padx=8, pady=6)
+        divider1 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
+        divider1.pack(fill="x", padx=8, pady=8)
+        
+        # Debug and Development section
+        debug_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        debug_frame.pack(fill="x", padx=8, pady=(0, 8))
+        
+        debug_header = ctk.CTkLabel(
+            debug_frame,
+            text="🐛 Debug & Development",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00d4ff"
+        )
+        debug_header.pack(pady=(12, 8), padx=12, anchor="w")
         
         # Debug/log window button
-        debug_btn = ctk.CTkButton(parent, text="🐛 Open Debug/Log Window", command=self.show_log_window, height=32)
-        debug_btn.pack(fill="x", padx=8, pady=4)
+        debug_btn = ctk.CTkButton(
+            debug_frame, 
+            text="📊 Open Debug/Log Window", 
+            command=self.show_log_window, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        debug_btn.pack(fill="x", padx=12, pady=(0, 8))
         
         # Debug toggle button
         self.debug_toggle_var = tk.BooleanVar(value=self.debug_enabled)
-        debug_toggle_btn = ctk.CTkButton(parent, text="🔧 Toggle Debug Logging", command=self.toggle_debug_logging, height=32)
-        debug_toggle_btn.pack(fill="x", padx=8, pady=4)
-        
-        # Theme picker button
-        theme_btn = ctk.CTkButton(parent, text="🎨 Theme Picker", command=self.open_theme_picker, height=32)
-        theme_btn.pack(fill="x", padx=8, pady=4)
-        
-        # Background image selection button
-        bg_btn = ctk.CTkButton(parent, text="🖼️ Set Background Image", command=self.set_background_image, height=32)
-        bg_btn.pack(fill="x", padx=8, pady=4)
+        debug_toggle_btn = ctk.CTkButton(
+            debug_frame, 
+            text="🔧 Toggle Debug Logging", 
+            command=self.toggle_debug_logging, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        debug_toggle_btn.pack(fill="x", padx=12, pady=(0, 12))
         
         # --- Divider ---
-        divider2 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
-        divider2.pack(fill="x", padx=8, pady=6)
+        divider2 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
+        divider2.pack(fill="x", padx=8, pady=8)
         
-        # Notification settings section
-        notification_label = ctk.CTkLabel(parent, text="🔔 Notifications", font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
-        notification_label.pack(pady=4)
+        # Appearance section
+        appearance_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        appearance_frame.pack(fill="x", padx=8, pady=(0, 8))
         
-        # Notification toggle
+        appearance_header = ctk.CTkLabel(
+            appearance_frame,
+            text="🎨 Appearance",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00d4ff"
+        )
+        appearance_header.pack(pady=(12, 8), padx=12, anchor="w")
+        
+        # Theme picker button
+        theme_btn = ctk.CTkButton(
+            appearance_frame, 
+            text="🎨 Theme Picker", 
+            command=self.open_theme_picker, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        theme_btn.pack(fill="x", padx=12, pady=(0, 8))
+        
+        # Background image selection button
+        bg_btn = ctk.CTkButton(
+            appearance_frame, 
+            text="🖼️ Set Background Image", 
+            command=self.set_background_image, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        bg_btn.pack(fill="x", padx=12, pady=(0, 12))
+        
+        # --- Divider ---
+        divider3 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
+        divider3.pack(fill="x", padx=8, pady=8)
+        
+        # Notification settings section with enhanced styling
+        notification_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        notification_frame.pack(fill="x", padx=8, pady=8)
+        
+        # Header with status indicator
+        notification_header_frame = ctk.CTkFrame(notification_frame, fg_color="transparent")
+        notification_header_frame.pack(fill="x", padx=12, pady=(12, 8))
+        
+        notification_label = ctk.CTkLabel(
+            notification_header_frame, 
+            text="🔔 Notifications", 
+            font=("Segoe UI", 14, "bold"), 
+            text_color="#00d4ff"
+        )
+        notification_label.pack(side="left")
+        
+        # Status indicator
+        notification_status_label = ctk.CTkLabel(
+            notification_header_frame, 
+            text="●", 
+            font=("Segoe UI", 16), 
+            text_color="#00ff88"
+        )
+        notification_status_label.pack(side="right", padx=(0, 8))
+        
+        # Notification toggle with enhanced styling
+        toggle_frame = ctk.CTkFrame(notification_frame, fg_color="#232946", corner_radius=8)
+        toggle_frame.pack(fill="x", padx=12, pady=(0, 8))
+        
         self.notifications_enabled = tk.BooleanVar(value=True)
-        notification_toggle = ctk.CTkCheckBox(parent, text="Enable Desktop Notifications", variable=self.notifications_enabled, command=self.toggle_notifications)
-        notification_toggle.pack(fill="x", padx=8, pady=2)
+        notification_toggle = ctk.CTkCheckBox(
+            toggle_frame, 
+            text="Enable Desktop Notifications", 
+            variable=self.notifications_enabled, 
+            command=self.toggle_notifications,
+            font=("Segoe UI", 12, "bold"),
+            text_color="#ffffff",
+            fg_color="#00d4ff",
+            hover_color="#00b0cc",
+            corner_radius=4
+        )
+        notification_toggle.pack(pady=12, padx=12, anchor="w")
+        
+        # Settings container
+        settings_container = ctk.CTkFrame(notification_frame, fg_color="#232946", corner_radius=8)
+        settings_container.pack(fill="x", padx=12, pady=(0, 12))
+        
+        settings_header = ctk.CTkLabel(
+            settings_container,
+            text="Notification Settings",
+            font=("Segoe UI", 12, "bold"),
+            text_color="#ffffff"
+        )
+        settings_header.pack(pady=(12, 8), padx=12, anchor="w")
         
         # Minimum profit threshold for notifications
-        profit_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        profit_frame.pack(fill="x", padx=8, pady=4)
+        profit_frame = ctk.CTkFrame(settings_container, fg_color="transparent")
+        profit_frame.pack(fill="x", padx=12, pady=(0, 8))
         
-        ctk.CTkLabel(profit_frame, text="Min Profit Alert:", font=MODERN_FONT).pack(side="left")
+        profit_label = ctk.CTkLabel(
+            profit_frame, 
+            text="Min Profit Alert:", 
+            font=("Segoe UI", 11, "bold"),
+            text_color="#a0aec0"
+        )
+        profit_label.pack(side="left")
+        
         self.notification_min_profit = tk.StringVar(value="200000")
-        profit_entry = ctk.CTkEntry(profit_frame, textvariable=self.notification_min_profit, width=120, font=MODERN_FONT)
+        profit_entry = ctk.CTkEntry(
+            profit_frame, 
+            textvariable=self.notification_min_profit, 
+            width=120, 
+            font=("Segoe UI", 11),
+            fg_color="#1a1d2e",
+            border_color="#2d3748",
+            text_color="#ffffff",
+            corner_radius=6
+        )
         profit_entry.pack(side="left", padx=(8, 4))
-        ctk.CTkLabel(profit_frame, text="silver", font=MODERN_FONT, text_color="#888888").pack(side="left")
+        
+        profit_unit = ctk.CTkLabel(
+            profit_frame, 
+            text="silver", 
+            font=("Segoe UI", 11),
+            text_color="#718096"
+        )
+        profit_unit.pack(side="left")
         
         # Cooldown setting
-        cooldown_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        cooldown_frame.pack(fill="x", padx=8, pady=4)
+        cooldown_frame = ctk.CTkFrame(settings_container, fg_color="transparent")
+        cooldown_frame.pack(fill="x", padx=12, pady=(0, 12))
         
-        ctk.CTkLabel(cooldown_frame, text="Notification Cooldown:", font=MODERN_FONT).pack(side="left")
+        cooldown_label = ctk.CTkLabel(
+            cooldown_frame, 
+            text="Notification Cooldown:", 
+            font=("Segoe UI", 11, "bold"),
+            text_color="#a0aec0"
+        )
+        cooldown_label.pack(side="left")
+        
         self.notification_cooldown_var = tk.StringVar(value="10")
-        cooldown_entry = ctk.CTkEntry(cooldown_frame, textvariable=self.notification_cooldown_var, width=80, font=MODERN_FONT)
+        cooldown_entry = ctk.CTkEntry(
+            cooldown_frame, 
+            textvariable=self.notification_cooldown_var, 
+            width=80, 
+            font=("Segoe UI", 11),
+            fg_color="#1a1d2e",
+            border_color="#2d3748",
+            text_color="#ffffff",
+            corner_radius=6
+        )
         cooldown_entry.pack(side="left", padx=(8, 4))
-        ctk.CTkLabel(cooldown_frame, text="seconds", font=MODERN_FONT, text_color="#888888").pack(side="left")
+        
+        cooldown_unit = ctk.CTkLabel(
+            cooldown_frame, 
+            text="seconds", 
+            font=("Segoe UI", 11),
+            text_color="#718096"
+        )
+        cooldown_unit.pack(side="left")
         
         # --- Divider ---
         divider2_5 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
         divider2_5.pack(fill="x", padx=8, pady=6)
         
-        # Flip management controls
-        flips_label = ctk.CTkLabel(parent, text="🦁 Flip Management", font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
-        flips_label.pack(pady=4)
+        # Auto-updater section with enhanced styling
+        updater_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        updater_frame.pack(fill="x", padx=8, pady=8)
         
-        export_btn = ctk.CTkButton(parent, text="💾 Export Completed Flips", command=self.export_opportunities, height=28)
-        export_btn.pack(fill="x", padx=8, pady=2)
-        clear_btn = ctk.CTkButton(parent, text="🗑️ Clear All Flips", command=self.clear_results, height=28)
-        clear_btn.pack(fill="x", padx=8, pady=2)
-        reset_sort_btn = ctk.CTkButton(parent, text="🔄 Reset Sort", command=self.reset_sort, height=28)
-        reset_sort_btn.pack(fill="x", padx=8, pady=2)
+        # Header with gradient effect
+        header_frame = ctk.CTkFrame(updater_frame, fg_color="transparent")
+        header_frame.pack(fill="x", padx=12, pady=(12, 8))
+        
+        updater_label = ctk.CTkLabel(
+            header_frame, 
+            text="🔄 Auto-Updater", 
+            font=("Segoe UI", 14, "bold"), 
+            text_color="#00d4ff"
+        )
+        updater_label.pack(side="left")
+        
+        # Status indicator
+        status_label = ctk.CTkLabel(
+            header_frame, 
+            text="●", 
+            font=("Segoe UI", 16), 
+            text_color="#00ff88"
+        )
+        status_label.pack(side="right", padx=(0, 8))
+        
+        # Version display with enhanced styling
+        version_frame = ctk.CTkFrame(updater_frame, fg_color="#232946", corner_radius=8)
+        version_frame.pack(fill="x", padx=12, pady=(0, 8))
+        
+        version_label = ctk.CTkLabel(
+            version_frame, 
+            text=f"Current Version: {self.current_version}", 
+            font=("Segoe UI", 12),
+            text_color="#a0aec0"
+        )
+        version_label.pack(pady=8)
+        
+        # Check for updates button with enhanced styling
+        check_update_btn = ctk.CTkButton(
+            parent, 
+            text="🔍 Check for Updates", 
+            command=self.check_for_updates, 
+            height=36,
+            fg_color="#00d4ff",
+            text_color="#181c24",
+            corner_radius=18,
+            font=("Segoe UI", 12, "bold"),
+            hover_color="#00b0cc"
+        )
+        check_update_btn.pack(fill="x", padx=8, pady=(0, 8))
+        
+        # Auto-check for updates on startup with enhanced styling
+        self.auto_check_updates = tk.BooleanVar(value=True)
+        auto_check_frame = ctk.CTkFrame(updater_frame, fg_color="transparent")
+        auto_check_frame.pack(fill="x", padx=12, pady=(0, 12))
+        
+        auto_check_toggle = ctk.CTkCheckBox(
+            auto_check_frame, 
+            text="Check for updates on startup", 
+            variable=self.auto_check_updates,
+            font=("Segoe UI", 11),
+            text_color="#e2e8f0",
+            fg_color="#00d4ff",
+            hover_color="#00b0cc",
+            corner_radius=4
+        )
+        auto_check_toggle.pack(side="left")
+        
+        # Last checked info
+        last_checked_label = ctk.CTkLabel(
+            auto_check_frame, 
+            text="Last checked: Never", 
+            font=("Segoe UI", 10),
+            text_color="#718096"
+        )
+        last_checked_label.pack(side="right")
         
         # --- Divider ---
-        divider3 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
-        divider3.pack(fill="x", padx=8, pady=6)
+        divider2_6 = ctk.CTkLabel(parent, text="", height=2, fg_color="#444444", width=200)
+        divider2_6.pack(fill="x", padx=8, pady=6)
+        
+        # Flip management section
+        flip_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        flip_frame.pack(fill="x", padx=8, pady=(0, 8))
+        
+        flip_header = ctk.CTkLabel(
+            flip_frame,
+            text="🦁 Flip Management",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00d4ff"
+        )
+        flip_header.pack(pady=(12, 8), padx=12, anchor="w")
+        
+        # Flip management buttons
+        export_btn = ctk.CTkButton(
+            flip_frame, 
+            text="💾 Export Completed Flips", 
+            command=self.export_opportunities, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        export_btn.pack(fill="x", padx=12, pady=(0, 8))
+        
+        clear_btn = ctk.CTkButton(
+            flip_frame, 
+            text="🗑️ Clear All Flips", 
+            command=self.clear_results, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        clear_btn.pack(fill="x", padx=12, pady=(0, 8))
+        
+        reset_sort_btn = ctk.CTkButton(
+            flip_frame, 
+            text="🔄 Reset Sort", 
+            command=self.reset_sort, 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        reset_sort_btn.pack(fill="x", padx=12, pady=(0, 12))
+        
+        # --- Divider ---
+        divider4 = ctk.CTkLabel(parent, text="", height=2, fg_color="#2d3748", width=200)
+        divider4.pack(fill="x", padx=8, pady=8)
         
         # Community and Support section
-        community_label = ctk.CTkLabel(parent, text="💬 Community & Support", font=("Segoe UI", 12, "bold"), text_color=ACCENT_COLOR)
-        community_label.pack(pady=4)
+        community_frame = ctk.CTkFrame(parent, fg_color="#1a1d2e", corner_radius=12, border_width=1, border_color="#2d3748")
+        community_frame.pack(fill="x", padx=8, pady=(0, 8))
+        
+        community_header = ctk.CTkLabel(
+            community_frame,
+            text="💬 Community & Support",
+            font=("Segoe UI", 14, "bold"),
+            text_color="#00d4ff"
+        )
+        community_header.pack(pady=(12, 8), padx=12, anchor="w")
         
         # Discord server button
-        discord_btn = ctk.CTkButton(parent, text="📱 Join Discord Server", command=lambda: self.open_url("https://discord.gg/JU43X7YVKB"), height=28)
-        discord_btn.pack(fill="x", padx=8, pady=2)
+        discord_btn = ctk.CTkButton(
+            community_frame, 
+            text="📱 Join Discord Server", 
+            command=lambda: self.open_url("https://discord.gg/JU43X7YVKB"), 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        discord_btn.pack(fill="x", padx=12, pady=(0, 8))
         
         # Support project button
-        support_btn = ctk.CTkButton(parent, text="❤️ Support Project", command=lambda: self.open_url("https://ko-fi.com/ratflipper"), height=28)
-        support_btn.pack(fill="x", padx=8, pady=2)
+        support_btn = ctk.CTkButton(
+            community_frame, 
+            text="❤️ Support Project", 
+            command=lambda: self.open_url("https://ko-fi.com/ratflipper"), 
+            height=36,
+            fg_color="#232946",
+            text_color="#ffffff",
+            corner_radius=18,
+            font=("Segoe UI", 11),
+            hover_color="#2d3748"
+        )
+        support_btn.pack(fill="x", padx=12, pady=(0, 12))
         
         # Optionally, add more flip-related controls here
 
     def create_enchanting_panel(self, parent):
         """Create enchanting panel with opportunities table and controls"""
+        # Create scrollable frame for enchanting panel
+        scrollable_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True)
+        
         self.enchanting_min_profit_var = tk.StringVar(value="1000")
-        enchanting_frame = ctk.CTkFrame(parent, fg_color="#23272e", corner_radius=24, border_width=0)
+        enchanting_frame = ctk.CTkFrame(scrollable_frame, fg_color="#23272e", corner_radius=24, border_width=0)
         self._themed_widgets.append(enchanting_frame)
-        enchanting_frame.grid(row=0, column=0, sticky="nsew", padx=18, pady=(0, 18))
-        enchanting_frame.grid_columnconfigure(0, weight=1)
-        enchanting_frame.grid_rowconfigure(2, weight=1)
+        enchanting_frame.pack(fill="both", expand=True, padx=18, pady=(0, 18))
         
         header = ctk.CTkLabel(
             enchanting_frame,
@@ -1768,11 +2622,11 @@ class RatFlipperGUI:
             text_color=ACCENT_COLOR
         )
         self._themed_widgets.append(header)
-        header.grid(row=0, column=0, pady=(16, 0), sticky="w", padx=24)
+        header.pack(pady=(16, 0), anchor="w", padx=24)
         
         # Controls: input prices, source city
         controls_frame = ctk.CTkFrame(enchanting_frame, fg_color="transparent")
-        controls_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(8, 8))
+        controls_frame.pack(fill="x", padx=24, pady=(8, 8))
         
         price_btn = AnimatedButton(controls_frame, text="Set Rune/Soul/Relic Prices", command=self.input_enchanting_prices, width=220, height=32)
         price_btn.grid(row=0, column=0, padx=(0, 20), sticky="w")
@@ -1808,14 +2662,14 @@ class RatFlipperGUI:
             self.enchanting_tree.heading(col, text=col, anchor=anchor_val, command=lambda c=col: self.sort_enchanting_by_column(c, False))
             self.enchanting_tree.column(col, width=width, anchor=anchor_val, minwidth=60, stretch=True)
         
-        self.enchanting_tree.grid(row=2, column=0, sticky='nsew', padx=24, pady=(0, 24))
+        self.enchanting_tree.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.enchanting_tree.configure(height=17)
         
         v_scrollbar = ttk.Scrollbar(enchanting_frame, orient='vertical', command=self.enchanting_tree.yview)
         h_scrollbar = ttk.Scrollbar(enchanting_frame, orient='horizontal', command=self.enchanting_tree.xview)
         self.enchanting_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
-        v_scrollbar.grid(row=2, column=1, sticky='ns')
-        h_scrollbar.grid(row=3, column=0, sticky='ew')
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
         
         style = ttk.Style()
         style.theme_use('clam')
@@ -1850,7 +2704,7 @@ class RatFlipperGUI:
         enchanting_count_label = ctk.CTkLabel(
             enchanting_frame, textvariable=self.enchanting_count_var, font=MODERN_FONT, fg_color="#181c24"
         )
-        enchanting_count_label.grid(row=4, column=0, sticky="e", padx=24, pady=(0, 8))
+        enchanting_count_label.pack(anchor="e", padx=24, pady=(0, 8))
         
         # Bind click events
         self.enchanting_tree.bind("<Button-1>", self.on_enchanting_tree_click)
@@ -1944,9 +2798,9 @@ class RatFlipperGUI:
             btn = getattr(self, f'analytics_btn_{period.lower().replace(" ", "_")}', None)
             if btn:
                 if period == active_period:
-                    btn.configure(bg="#00d4ff", fg="#000000")
+                    btn.configure(fg_color="#00d4ff", text_color="#181c24")
                 else:
-                    btn.configure(bg="#232946", fg="#ffffff")
+                    btn.configure(fg_color="#232946", text_color="#a0aec0")
     
     def _get_filtered_flips_by_period(self, period):
         """Get flips filtered by the selected time period."""
@@ -2042,7 +2896,7 @@ class RatFlipperGUI:
         period = self.analytics_time_period.get()
         filtered_flips = self._get_filtered_flips_by_period(period)
 
-        self.analytics_table.config(state="normal")
+        self.analytics_table.configure(state="normal")
         self.analytics_table.delete("1.0", "end")
         self.analytics_table.insert("end", f"{'Item':30} {'City':10} {'Profit':>10} {'Time Completed':>20}\n")
         self.analytics_table.insert("end", "-"*80+"\n")
@@ -2052,72 +2906,30 @@ class RatFlipperGUI:
             self.analytics_table.insert("end", f"{flip['item'][:28]:30} {flip['city'][:10]:10} {flip['profit']:>10,} {flip['time']:>20}\n")
             total_profit += flip['profit']
         
-        self.analytics_table.config(state="disabled")
+        self.analytics_table.configure(state="disabled")
         
         # Calculate and update all stats
         stats = self._calculate_analytics_stats(filtered_flips)
         
-        self.analytics_profit_label.config(text=f"Total Profit: {stats['total_profit']:,}")
-        self.analytics_flips_count_label.config(text=f"Flips: {stats['flip_count']}")
-        self.analytics_avg_profit_label.config(text=f"Avg Profit: {stats['avg_profit']:,}")
-        self.analytics_profit_per_day_label.config(text=f"Profit/Day: {stats['profit_per_day']:,}")
-        self.analytics_max_profit_label.config(text=f"Max Profit: {stats['max_profit']:,}")
+        self.analytics_profit_label.configure(text=f"Total Profit: {stats['total_profit']:,}")
+        self.analytics_flips_count_label.configure(text=f"Flips: {stats['flip_count']}")
+        self.analytics_avg_profit_label.configure(text=f"Avg Profit: {stats['avg_profit']:,}")
+        self.analytics_profit_per_day_label.configure(text=f"Profit/Day: {stats['profit_per_day']:,}")
+        self.analytics_max_profit_label.configure(text=f"Max Profit: {stats['max_profit']:,}")
         
         # Truncate long item names for display
         best_item_display = stats['best_item'][:15] + "..." if len(stats['best_item']) > 15 else stats['best_item']
-        self.analytics_best_item_label.config(text=f"Best Item: {best_item_display}")
-        self.analytics_best_city_label.config(text=f"Best City: {stats['best_city']}")
-
-        # Redraw matplotlib graph
-        for widget in self.analytics_graph_frame.winfo_children():
-            widget.destroy()
-
-        try:
-            import matplotlib
-            matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
-            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-            import matplotlib.dates as mdates
-            from datetime import datetime
-
-            if filtered_flips:
-                # Ensure data is sorted by time for a correct cumulative graph
-                sorted_history = sorted(filtered_flips, key=lambda x: datetime.strptime(x['time'], '%Y-%m-%d %H:%M:%S'))
-                times = [datetime.strptime(f['time'], '%Y-%m-%d %H:%M:%S') for f in sorted_history]
-                profits = [f['profit'] for f in sorted_history]
-                cum_profits = [sum(profits[:i+1]) for i in range(len(profits))]
-                times_num = mdates.date2num(times)
-                
-                fig, ax = plt.subplots(figsize=(6,2.5), dpi=100)
-                ax.plot(times_num, cum_profits, marker='o', color='#00d4ff', linestyle='solid')
-                ax.set_title(f'Cumulative Profit Over Time ({period})', color='#fafafa')
-                ax.set_xlabel('Time', color='#fafafa')
-                ax.set_ylabel('Profit', color='#fafafa')
-                ax.tick_params(axis='x', colors='#fafafa', rotation=30)
-                ax.tick_params(axis='y', colors='#fafafa')
-                ax.set_facecolor('#181c24')
-                fig.patch.set_facecolor('#181c24')
-                ax.grid(True, color='#444', linestyle='--', alpha=0.3)
-                fig.autofmt_xdate()
-
-                canvas = FigureCanvasTkAgg(fig, master=self.analytics_graph_frame)
-                canvas.draw()
-                canvas.get_tk_widget().pack(fill="both", expand=True)
-        except ImportError:
-            if not hasattr(self, '_warned_matplotlib'):
-                warn_label = tk.Label(self.analytics_graph_frame, text="matplotlib not installed, cannot show profit graph.", bg="#181c24", fg="#ff4b91", font=("Consolas", 10))
-                warn_label.pack(pady=8)
-                self._warned_matplotlib = True
-        except Exception as e:
-            err_label = tk.Label(self.analytics_graph_frame, text=f"Error in Analytics graph: {e}", bg="#181c24", fg="#ff4b91", font=("Consolas", 10))
-            err_label.pack(pady=8)
+        self.analytics_best_item_label.configure(text=f"Best Item: {best_item_display}")
+        self.analytics_best_city_label.configure(text=f"Best City: {stats['best_city']}")
 
     def create_results_panel(self, parent):
-        results_frame = ctk.CTkFrame(parent, fg_color="#23272e", corner_radius=24, border_width=0)
+        # Create scrollable frame for results panel
+        scrollable_frame = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scrollable_frame.pack(fill="both", expand=True)
+        
+        results_frame = ctk.CTkFrame(scrollable_frame, fg_color="#23272e", corner_radius=24, border_width=0)
         self._themed_widgets.append(results_frame)
-        results_frame.grid(row=0, column=0, sticky="nsew", padx=18, pady=(0, 18))
-        results_frame.grid_columnconfigure(0, weight=1)
-        results_frame.grid_rowconfigure(2, weight=1) # Make row 2 (the treeview) expandable
+        results_frame.pack(fill="both", expand=True, padx=18, pady=(0, 18))
         results_header = ctk.CTkLabel(
             results_frame,
             text="📊  Flip Opportunities",
@@ -2125,10 +2937,10 @@ class RatFlipperGUI:
             text_color=ACCENT_COLOR
         )
         self._themed_widgets.append(results_header)
-        results_header.grid(row=0, column=0, pady=(16, 0), sticky="w", padx=24)
+        results_header.pack(pady=(16, 0), anchor="w", padx=24)
 
         filter_frame = ctk.CTkFrame(results_frame, fg_color="transparent")
-        filter_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(8, 8))
+        filter_frame.pack(fill="x", padx=24, pady=(8, 8))
         
         # Using grid layout instead of pack for more predictable alignment
         ctk.CTkLabel(filter_frame, text="City:", font=MODERN_FONT).grid(row=0, column=0, padx=(0, 5), sticky="w")
@@ -2202,15 +3014,15 @@ class RatFlipperGUI:
             anchor_val = 'center' if anchor == 'center' else 'w'
             self.tree.heading(col, text=col, anchor=anchor_val, command=lambda c=col: self.sort_by_column(c, False))
             self.tree.column(col, width=width, anchor=anchor_val, minwidth=60, stretch=True)
-        self.tree.grid(row=2, column=0, sticky='nsew', padx=24, pady=(0, 24))
+        self.tree.pack(fill="both", expand=True, padx=24, pady=(0, 24))
         self.tree.configure(height=17)
         self.tree.master.update_idletasks()
         self.tree.master.winfo_toplevel().minsize(1400, 600)
         v_scrollbar = ttk.Scrollbar(results_frame, orient='vertical', command=self.tree.yview)
         h_scrollbar = ttk.Scrollbar(results_frame, orient='horizontal', command=self.tree.xview)
         self.tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
-        v_scrollbar.grid(row=2, column=1, sticky='ns')
-        h_scrollbar.grid(row=3, column=0, sticky='ew')
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar.pack(side="bottom", fill="x")
         self.tree.tag_configure('oddrow', background='#23272e')
         self.tree.tag_configure('evenrow', background='#2b2f36')
         # Row hover effect
@@ -2229,7 +3041,7 @@ class RatFlipperGUI:
         # Button frame with glass effect
         button_frame = ctk.CTkFrame(results_frame, fg_color="#232946", corner_radius=18)
         self._themed_widgets.append(button_frame)
-        button_frame.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 24))
+        button_frame.pack(fill="x", padx=24, pady=(0, 24))
         export_btn = AnimatedButton(
             button_frame, text="💾  Export CSV", command=self.export_opportunities, width=140, height=40, fg_color=ACCENT_COLOR, text_color="#181c24", corner_radius=20
         )
@@ -2255,8 +3067,6 @@ class RatFlipperGUI:
         self.tree.bind('<Button-3>', self.show_context_menu)
         self.tree.bind('<Double-1>', self.on_item_double_click)
         self.create_context_menu()
-        results_frame.grid_rowconfigure(2, weight=1)
-        results_frame.grid_columnconfigure(0, weight=1)
 
     def _update_results_display(self):
         # Clear table
@@ -2764,6 +3574,12 @@ class RatFlipperGUI:
                 self.notification_min_profit.set(notification_min_profit)
                 self.notification_cooldown_var.set(notification_cooldown)
                 
+                # Load auto-updater settings
+                auto_check_updates = cfg.get("auto_check_updates", True)
+                if hasattr(self, 'auto_check_updates'):
+                    self.auto_check_updates.set(auto_check_updates)
+                self.auto_updater.enabled = cfg.get("updater_enabled", True)
+                
                 print(f"✅ Loaded notification settings: enabled={notifications_enabled}, min_profit={notification_min_profit}, cooldown={notification_cooldown}s")
         except Exception as e:
             print(f"❌ Error loading config: {e}")
@@ -2776,7 +3592,9 @@ class RatFlipperGUI:
                 "bg_url": self.bg_url,
                 "notifications_enabled": self.notifications_enabled.get(),
                 "notification_min_profit": self.notification_min_profit.get(),
-                "notification_cooldown": self.notification_cooldown_var.get()
+                "notification_cooldown": self.notification_cooldown_var.get(),
+                "auto_check_updates": self.auto_check_updates.get() if hasattr(self, 'auto_check_updates') else True,
+                "updater_enabled": self.auto_updater.enabled
             }
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 pyjson.dump(config_data, f)
@@ -3304,7 +4122,7 @@ class RatFlipperGUI:
         opp_batch_text.pack(fill="both", expand=True)
         
         # Button frame for opportunity batch controls
-        opp_btn_frame = tk.Frame(opp_batch_frame, bg="#181c24")
+        opp_btn_frame = ctk.CTkFrame(opp_batch_frame, fg_color="#181c24")
         opp_btn_frame.pack(fill="x", padx=8, pady=4)
         
         def clear_opp_batch_log():
@@ -3330,7 +4148,7 @@ class RatFlipperGUI:
         scan_text.pack(fill="both", expand=True)
         
         # Button frame for scan log controls
-        scan_btn_frame = tk.Frame(scan_frame, bg="#181c24")
+        scan_btn_frame = ctk.CTkFrame(scan_frame, fg_color="#181c24")
         scan_btn_frame.pack(fill="x", padx=8, pady=4)
         
         def clear_scan_log():
@@ -3351,7 +4169,7 @@ class RatFlipperGUI:
         # Price Data tab
         price_frame = tk.Frame(notebook)
         price_summary_var = tk.StringVar()
-        tk.Label(price_frame, textvariable=price_summary_var, font=("Consolas", 11, "bold"), bg="#181c24", fg="#a259ff").pack(anchor="nw", padx=8, pady=4)
+        ctk.CTkLabel(price_frame, textvariable=price_summary_var, font=("Segoe UI", 11, "bold"), text_color="#a259ff").pack(anchor="nw", padx=8, pady=4)
         price_text = tk.Text(price_frame, wrap="none", font=("Consolas", 10), bg="#181c24", fg="#a259ff")
         price_text.pack(fill="both", expand=True)
 
@@ -3395,7 +4213,7 @@ class RatFlipperGUI:
         # Black Market Data tab
         bm_frame = tk.Frame(notebook)
         bm_summary_var = tk.StringVar()
-        tk.Label(bm_frame, textvariable=bm_summary_var, font=("Consolas", 11, "bold"), bg="#181c24", fg="#ff6b6b").pack(anchor="nw", padx=8, pady=4)
+        ctk.CTkLabel(bm_frame, textvariable=bm_summary_var, font=("Segoe UI", 11, "bold"), text_color="#ff6b6b").pack(anchor="nw", padx=8, pady=4)
         bm_text = tk.Text(bm_frame, wrap="none", font=("Consolas", 10), bg="#181c24", fg="#ff6b6b")
         bm_text.pack(fill="both", expand=True)
 
@@ -3434,7 +4252,7 @@ class RatFlipperGUI:
         # City Data tab
         city_frame = tk.Frame(notebook)
         city_summary_var = tk.StringVar()
-        tk.Label(city_frame, textvariable=city_summary_var, font=("Consolas", 11, "bold"), bg="#181c24", fg="#4ecdc4").pack(anchor="nw", padx=8, pady=4)
+        ctk.CTkLabel(city_frame, textvariable=city_summary_var, font=("Segoe UI", 11, "bold"), text_color="#4ecdc4").pack(anchor="nw", padx=8, pady=4)
         city_text = tk.Text(city_frame, wrap="none", font=("Consolas", 10), bg="#181c24", fg="#4ecdc4")
         city_text.pack(fill="both", expand=True)
 
@@ -3545,7 +4363,7 @@ class RatFlipperGUI:
         # Filter Debug tab with summary, test item, and clear log
         filter_frame = tk.Frame(notebook)
         summary_var = tk.StringVar()
-        summary_label = tk.Label(filter_frame, textvariable=summary_var, font=("Consolas", 11, "bold"), bg="#181c24", fg="#00ff99")
+        summary_label = ctk.CTkLabel(filter_frame, textvariable=summary_var, font=("Segoe UI", 11, "bold"), text_color="#00ff99")
         summary_label.pack(anchor="nw", padx=8, pady=4)
         filter_text = tk.Text(filter_frame, wrap="word", font=("Consolas", 10), bg="#181c24", fg="#00ff99", height=18)
         filter_text.pack(fill="both", expand=True, padx=4)
@@ -3567,12 +4385,12 @@ class RatFlipperGUI:
             filter_text.after(1000, update_filter_tab)
         update_filter_tab()
         # Test Item field
-        test_frame = tk.Frame(filter_frame, bg="#181c24")
+        test_frame = ctk.CTkFrame(filter_frame, fg_color="#181c24")
         test_frame.pack(fill="x", padx=8, pady=2)
-        tk.Label(test_frame, text="Test Item ID:", font=("Consolas", 10), bg="#181c24", fg="#00ff99").pack(side="left")
+        ctk.CTkLabel(test_frame, text="Test Item ID:", font=("Segoe UI", 10), text_color="#00ff99").pack(side="left")
         test_entry = tk.Entry(test_frame, font=("Consolas", 10), bg="#232946", fg="#00ff99", width=32)
         test_entry.pack(side="left", padx=6)
-        test_result = tk.Label(test_frame, text="", font=("Consolas", 10, "bold"), bg="#181c24")
+        test_result = ctk.CTkLabel(test_frame, text="", font=("Segoe UI", 10, "bold"))
         test_result.pack(side="left", padx=8)
         def check_test_item(*_):
             val = test_entry.get().lower().strip()
@@ -4125,7 +4943,7 @@ class RatFlipperGUI:
         dialog.title("Filter Presets")
         dialog.geometry("400x300")
         dialog.configure(bg="#181c24")
-        tk.Label(dialog, text="Filter Presets", font=("Consolas", 13, "bold"), bg="#181c24", fg="#00d4ff").pack(pady=8)
+        ctk.CTkLabel(dialog, text="Filter Presets", font=("Segoe UI", 13, "bold"), text_color="#00d4ff").pack(pady=8)
         presets = self.load_filter_presets()
         listbox = tk.Listbox(dialog, font=("Consolas", 11), bg="#232946", fg="#00ff99")
         for name in presets:
@@ -4142,7 +4960,7 @@ class RatFlipperGUI:
             if name:
                 self.save_filter_preset(name)
                 dialog.destroy()
-        btn_frame = tk.Frame(dialog, bg="#181c24")
+        btn_frame = ctk.CTkFrame(dialog, fg_color="#181c24")
         btn_frame.pack(fill="x", pady=6)
         tk.Button(btn_frame, text="Load Selected", command=load_selected, bg="#232946", fg="#00ff99", font=("Consolas", 10, "bold")).pack(side="left", padx=8)
         tk.Button(btn_frame, text="Save Current as New", command=save_new, bg="#232946", fg="#00ff99", font=("Consolas", 10, "bold")).pack(side="left", padx=8)
@@ -4179,10 +4997,6 @@ class RatFlipperGUI:
 
             profitable_opportunities = []
             for opp in filtered_opportunities:
-                # Skip if BM age is older than 20 minutes
-                if hasattr(opp, 'bm_age') and opp.bm_age > 20:
-                    continue
-                    
                 profit = int((opp.bm_price - opp.city_price) - (opp.bm_price * tax_rate))
                 if profit >= min_profit:
                     profitable_opportunities.append(opp)
@@ -4219,33 +5033,41 @@ class RatFlipperGUI:
             logger.error(f"Error saving completed flips: {e}")
 
     def create_analytics_section(self, parent):
+        """Create analytics section with original functionality and modern styling"""
         try:
             # Time period filter frame
-            filter_frame = tk.Frame(parent, bg="#181c24")
+            filter_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
             filter_frame.pack(fill="x", padx=8, pady=(8, 4))
             
-            tk.Label(filter_frame, text="Time Period:", font=("Consolas", 10, "bold"), bg="#181c24", fg="#00d4ff").pack(side="left", padx=(0, 10))
+            filter_header = ctk.CTkLabel(
+                filter_frame,
+                text="⏰ Time Period Filter",
+                font=("Segoe UI", 12, "bold"),
+                text_color="#ffffff"
+            )
+            filter_header.pack(pady=(12, 8), padx=12, anchor="w")
             
             # Time period variable
-            self.analytics_time_period = tk.StringVar(value="All Time")
+            self.analytics_time_period = ctk.StringVar(value="All Time")
             
             # Time period buttons
-            time_buttons_frame = tk.Frame(filter_frame, bg="#181c24")
-            time_buttons_frame.pack(side="left")
+            time_buttons_frame = ctk.CTkFrame(filter_frame, fg_color="transparent")
+            time_buttons_frame.pack(side="left", padx=12, pady=(0, 12))
             
             periods = [("Week", "Week"), ("Month", "Month"), ("Year", "Year"), ("All Time", "All Time")]
             for text, value in periods:
-                btn = tk.Button(
+                btn = ctk.CTkButton(
                     time_buttons_frame, 
                     text=text, 
                     command=lambda v=value: self.change_analytics_period(v),
-                    bg="#232946", 
-                    fg="#ffffff", 
-                    font=("Consolas", 9, "bold"),
-                    relief="flat",
-                    bd=0,
-                    padx=12,
-                    pady=4
+                    fg_color="#232946",
+                    text_color="#a0aec0",
+                    font=("Segoe UI", 11, "bold"),
+                    corner_radius=18,
+                    height=32,
+                    hover_color="#2d3748",
+                    border_width=1,
+                    border_color="#2d3748"
                 )
                 btn.pack(side="left", padx=2)
                 # Store button reference for highlighting
@@ -4255,55 +5077,161 @@ class RatFlipperGUI:
             self._highlight_analytics_button("All Time")
             
             # Stats frame
-            stats_frame = tk.Frame(parent, bg="#181c24")
+            stats_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
             stats_frame.pack(fill="x", padx=8, pady=4)
             
+            stats_header = ctk.CTkLabel(
+                stats_frame,
+                text="📊 Performance Statistics",
+                font=("Segoe UI", 12, "bold"),
+                text_color="#ffffff"
+            )
+            stats_header.pack(pady=(12, 8), padx=12, anchor="w")
+            
             # First row of stats
-            stats_row1 = tk.Frame(stats_frame, bg="#181c24")
-            stats_row1.pack(fill="x")
+            stats_row1 = ctk.CTkFrame(stats_frame, fg_color="transparent")
+            stats_row1.pack(fill="x", padx=12, pady=(0, 8))
             
             # Profit label
-            self.analytics_profit_label = tk.Label(stats_row1, text="Total Profit: 0", font=("Consolas", 11, "bold"), bg="#181c24", fg="#ffeb3b")
+            self.analytics_profit_label = ctk.CTkLabel(
+                stats_row1, 
+                text="Total Profit: 0", 
+                font=("Segoe UI", 14, "bold"), 
+                text_color="#00d4ff"
+            )
             self.analytics_profit_label.pack(side="left")
             
             # Additional stats labels
-            self.analytics_flips_count_label = tk.Label(stats_row1, text="Flips: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_flips_count_label = ctk.CTkLabel(
+                stats_row1, 
+                text="Flips: 0", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_flips_count_label.pack(side="left", padx=(20, 0))
             
-            self.analytics_avg_profit_label = tk.Label(stats_row1, text="Avg Profit: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_avg_profit_label = ctk.CTkLabel(
+                stats_row1, 
+                text="Avg Profit: 0", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_avg_profit_label.pack(side="left", padx=(20, 0))
             
-            self.analytics_profit_per_day_label = tk.Label(stats_row1, text="Profit/Day: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_profit_per_day_label = ctk.CTkLabel(
+                stats_row1, 
+                text="Profit/Day: 0", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_profit_per_day_label.pack(side="left", padx=(20, 0))
             
             # Second row of stats
-            stats_row2 = tk.Frame(stats_frame, bg="#181c24")
-            stats_row2.pack(fill="x", pady=(4, 0))
+            stats_row2 = ctk.CTkFrame(stats_frame, fg_color="transparent")
+            stats_row2.pack(fill="x", padx=12, pady=(0, 12))
             
-            self.analytics_max_profit_label = tk.Label(stats_row2, text="Max Profit: 0", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_max_profit_label = ctk.CTkLabel(
+                stats_row2, 
+                text="Max Profit: 0", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_max_profit_label.pack(side="left")
             
-            self.analytics_best_item_label = tk.Label(stats_row2, text="Best Item: None", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_best_item_label = ctk.CTkLabel(
+                stats_row2, 
+                text="Best Item: None", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_best_item_label.pack(side="left", padx=(20, 0))
             
-            self.analytics_best_city_label = tk.Label(stats_row2, text="Best City: None", font=("Consolas", 10), bg="#181c24", fg="#00ff99")
+            self.analytics_best_city_label = ctk.CTkLabel(
+                stats_row2, 
+                text="Best City: None", 
+                font=("Segoe UI", 12), 
+                text_color="#e2e8f0"
+            )
             self.analytics_best_city_label.pack(side="left", padx=(20, 0))
             
             # Table
-            self.analytics_table = tk.Text(parent, wrap="none", font=("Consolas", 9), bg="#181c24", fg="#00ff99", height=12)
-            self.analytics_table.pack(fill="both", expand=True, padx=8, pady=4)
+            table_frame = ctk.CTkFrame(parent, fg_color="#232946", corner_radius=12, border_width=1, border_color="#2d3748")
+            table_frame.pack(fill="both", expand=True, padx=8, pady=4)
             
-            # Graph frame
-            self.analytics_graph_frame = tk.Frame(parent, bg="#181c24")
-            self.analytics_graph_frame.pack(fill="both", expand=True, padx=8, pady=8)
+            table_header = ctk.CTkLabel(
+                table_frame,
+                text="📋 Flip History",
+                font=("Segoe UI", 14, "bold"),
+                text_color="#00d4ff"
+            )
+            table_header.pack(pady=(16, 12), padx=16, anchor="w")
+            
+            self.analytics_table = ctk.CTkTextbox(
+                table_frame, 
+                font=("Segoe UI", 11), 
+                fg_color="#1a1d2e", 
+                text_color="#e2e8f0", 
+                height=300,
+                wrap="none",
+                corner_radius=8
+            )
+            self.analytics_table.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+            
+
             
             # Refresh button
-            refresh_btn = tk.Button(parent, text="Refresh", command=self.refresh_analytics_tab, bg="#232946", fg="#00d4ff", font=("Consolas", 9, "bold"))
-            refresh_btn.pack(anchor="ne", padx=8, pady=2)
+            refresh_btn = ctk.CTkButton(
+                parent, 
+                text="🔄 Refresh Analytics", 
+                command=self.refresh_analytics_tab, 
+                fg_color="#00d4ff",
+                text_color="#181c24",
+                font=("Segoe UI", 12, "bold"),
+                corner_radius=20,
+                height=40,
+                hover_color="#00b0cc"
+            )
+            refresh_btn.pack(anchor="ne", padx=16, pady=16)
             
             self.refresh_analytics_tab()
         except Exception as e:
-            tk.Label(parent, text=f"Error loading Analytics: {e}", bg="#181c24", fg="#ff4b91", font=("Consolas", 9)).pack(pady=8)
+            # Create error display with modern styling
+            error_frame = ctk.CTkFrame(parent, fg_color="#2d1b1b", corner_radius=12, border_width=1, border_color="#ff4b91")
+            error_frame.pack(fill="x", padx=8, pady=8)
+            
+            error_label = ctk.CTkLabel(
+                error_frame, 
+                text=f"❌ Error loading Analytics: {e}", 
+                font=("Segoe UI", 11, "bold"),
+                text_color="#ff4b91"
+            )
+            error_label.pack(pady=12)
+            
+            # Add retry button
+            retry_btn = ctk.CTkButton(
+                error_frame,
+                text="🔄 Retry",
+                command=lambda: self.rebuild_analytics_section(parent),
+                fg_color="#ff4b91",
+                text_color="#ffffff",
+                font=("Segoe UI", 10, "bold"),
+                corner_radius=8,
+                height=28
+            )
+            retry_btn.pack(pady=(0, 12))
+
+    def rebuild_analytics_section(self, parent):
+        """Rebuild the analytics section from scratch"""
+        try:
+            # Clear existing widgets
+            for widget in parent.winfo_children():
+                widget.destroy()
+            
+            # Recreate the analytics section
+            self.create_analytics_section(parent)
+            print("✅ Analytics section rebuilt successfully")
+        except Exception as e:
+            print(f"❌ Error rebuilding analytics section: {e}")
 
     def open_url(self, url):
         """Open URL in default browser"""
@@ -4312,6 +5240,23 @@ class RatFlipperGUI:
             webbrowser.open(url)
         except Exception as e:
             print(f"❌ Error opening URL: {e}")
+    
+    def check_for_updates(self):
+        """Check for updates using the auto-updater"""
+        try:
+            print("🔍 Checking for updates...")
+            self.auto_updater.check_for_updates(parent=self.root)
+        except Exception as e:
+            print(f"❌ Error checking for updates: {e}")
+            messagebox.showerror("Update Error", f"Failed to check for updates: {str(e)}")
+    
+    def check_for_updates_silent(self):
+        """Check for updates silently (no user interaction unless update is found)"""
+        try:
+            print("🔍 Checking for updates silently...")
+            self.auto_updater.check_for_updates(parent=self.root, silent=True)
+        except Exception as e:
+            print(f"❌ Error checking for updates silently: {e}")
     
     def reset_sort(self):
         """Reset sort to default (Total Profit, descending)"""
@@ -4335,7 +5280,7 @@ class RatFlipperGUI:
         print(f"🔔 Desktop notifications {status}")
     
     def show_notification(self, title, message, duration=5000):
-        """Show a desktop notification popup"""
+        """Show a beautiful desktop notification popup with modern styling"""
         if not self.notifications_enabled.get():
             return
             
@@ -4360,23 +5305,44 @@ class RatFlipperGUI:
             # Play notification sound
             self.play_notification_sound()
             
-            # Create notification window
+            # Create notification window with modern styling
             notification = tk.Toplevel(self.root)
             notification.title("")
-            notification.geometry("350x120")
-            notification.configure(bg="#232946")
+            notification.configure(bg="#1a1d2e")
             
-            # Position in bottom-right corner (fixed position)
+            # Position in bottom-right corner with smooth animation
             screen_width = notification.winfo_screenwidth()
             screen_height = notification.winfo_screenheight()
             
-            # Calculate position with safety margins
-            notification_width = 350
-            notification_height = 140
-            x = max(10, screen_width - notification_width - 10)  # 20px margin from right
-            y = max(10, screen_height - notification_height - 10)  # 20px margin from bottom
+            # Calculate dynamic height based on message content
+            notification_width = 380
+            base_height = 140
             
-            notification.geometry(f"{notification_width}x{notification_height}+{x}+{y}")
+            # Create a temporary label to measure text height
+            temp_label = tk.Label(notification, text=message, font=("Segoe UI", 10), 
+                                wraplength=340, justify="left")
+            temp_label.pack_forget()  # Don't actually show it
+            
+            # Get the required height for the text
+            temp_label.update_idletasks()
+            text_height = temp_label.winfo_reqheight()
+            temp_label.destroy()
+            
+            # Calculate total height needed
+            header_height = 45  # Header space
+            padding = 35  # Total padding
+            progress_height = 4  # Progress bar height
+            
+            required_height = header_height + text_height + padding + progress_height
+            
+            # Ensure minimum and maximum heights
+            notification_height = max(140, min(required_height, 400))  # Min 140px, Max 400px
+            
+            x = max(20, screen_width - notification_width - 20)  # 20px margin from right
+            y = max(20, screen_height - notification_height - 20)  # 20px margin from bottom
+            
+            # Set initial geometry and start off-screen for slide-in animation
+            notification.geometry(f"{notification_width}x{notification_height}+{screen_width}+{y}")
             
             # Make it stay on top
             notification.attributes('-topmost', True)
@@ -4384,25 +5350,72 @@ class RatFlipperGUI:
             # Remove window decorations
             notification.overrideredirect(True)
             
-            # Create notification content
-            title_label = tk.Label(notification, text=title, font=("Segoe UI", 12, "bold"), 
+            # Create main container with glassmorphism effect
+            main_frame = tk.Frame(notification, bg="#1a1d2e", relief="flat", bd=0)
+            main_frame.pack(fill="both", expand=True, padx=2, pady=2)
+            
+            # Create inner frame with gradient-like effect
+            inner_frame = tk.Frame(main_frame, bg="#232946", relief="flat", bd=0)
+            inner_frame.pack(fill="both", expand=True, padx=1, pady=1)
+            
+            # Add subtle border effect
+            border_frame = tk.Frame(inner_frame, bg="#00d4ff", height=3)
+            border_frame.pack(fill="x", side="top")
+            
+            # Header frame with icon and title
+            header_frame = tk.Frame(inner_frame, bg="#232946", relief="flat", bd=0)
+            header_frame.pack(fill="x", padx=16, pady=(10, 6))
+            
+            # App icon
+            icon_label = tk.Label(header_frame, text="🦁", font=("Segoe UI Emoji", 14), 
+                                bg="#232946", fg="#00d4ff")
+            icon_label.pack(side="left")
+            
+            # Title with enhanced styling
+            title_label = tk.Label(header_frame, text=title, font=("Segoe UI", 12, "bold"), 
                                  bg="#232946", fg="#00d4ff", anchor="w")
-            title_label.pack(fill="x", padx=18, pady=(10, 8))
+            title_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
             
-            message_label = tk.Label(notification, text=message, font=("Segoe UI", 10), 
-                                   bg="#232946", fg="#ffffff", anchor="w", justify="left")
-            message_label.pack(fill="x", padx=18, pady=(0, 10))
-            
-            # Add close button
-            close_btn = tk.Button(notification, text="×", font=("Segoe UI", 16, "bold"), 
-                                bg="#ff4444", fg="white", bd=0, padx=8, pady=2,
+            # Close button with modern styling
+            close_btn = tk.Button(header_frame, text="×", font=("Segoe UI", 16, "bold"), 
+                                bg="#ff4444", fg="white", bd=0, padx=4, pady=0,
+                                relief="flat", cursor="hand2",
                                 command=lambda: self.close_notification(notification))
-            close_btn.place(x=320, y=5)
+            close_btn.pack(side="right")
+            
+            # Message frame with more space
+            message_frame = tk.Frame(inner_frame, bg="#232946", relief="flat", bd=0)
+            message_frame.pack(fill="both", expand=True, padx=16, pady=(6, 10))
+            
+            # Message with enhanced styling and proper wrapping
+            message_label = tk.Label(message_frame, text=message, font=("Segoe UI", 10), 
+                                   bg="#232946", fg="#e2e8f0", anchor="nw", justify="left",
+                                   wraplength=340, padx=0, pady=6)
+            message_label.pack(fill="both", expand=True, anchor="nw", padx=0, pady=6)
+            
+            # Progress bar for auto-close
+            progress_frame = tk.Frame(inner_frame, bg="#1a1d2e", height=2)
+            progress_frame.pack(fill="x", side="bottom")
+            progress_frame.pack_propagate(False)
+            
+            progress_bar = tk.Frame(progress_frame, bg="#00d4ff", height=2)
+            progress_bar.pack(side="left")
+            
+            # Animate progress bar
+            def animate_progress(progress=0):
+                if notification.winfo_exists():
+                    progress_width = int((progress / 100) * notification_width)
+                    progress_bar.configure(width=progress_width)
+                    if progress < 100:
+                        notification.after(duration // 100, lambda: animate_progress(progress + 1))
+            
+            # Start progress animation
+            animate_progress()
             
             # Auto-close after duration
             notification.after(duration, lambda: self.close_notification(notification))
             
-            # Add hover effect to close button
+            # Enhanced hover effects
             def on_enter(e):
                 close_btn.configure(bg="#ff6666")
             def on_leave(e):
@@ -4410,6 +5423,19 @@ class RatFlipperGUI:
             
             close_btn.bind("<Enter>", on_enter)
             close_btn.bind("<Leave>", on_leave)
+            
+            # Slide-in animation
+            def slide_in(step=0):
+                if notification.winfo_exists():
+                    current_x = screen_width - (step * 20)  # Slide in from right
+                    if current_x <= x:
+                        notification.geometry(f"{notification_width}x{notification_height}+{x}+{y}")
+                    else:
+                        notification.geometry(f"{notification_width}x{notification_height}+{current_x}+{y}")
+                        notification.after(10, lambda: slide_in(step + 1))
+            
+            # Start slide-in animation
+            slide_in()
             
             # Store reference and update time
             self.active_notification = notification
@@ -4423,14 +5449,36 @@ class RatFlipperGUI:
             print(f"❌ Error showing notification: {e}")
     
     def close_notification(self, notification):
-        """Safely close notification window"""
+        """Safely close notification window with smooth slide-out animation"""
         try:
             if notification and notification.winfo_exists():
-                notification.destroy()
-                if self.active_notification == notification:
-                    self.active_notification = None
+                # Get current position
+                current_x = notification.winfo_x()
+                screen_width = notification.winfo_screenwidth()
+                
+                # Slide-out animation
+                def slide_out(step=0):
+                    if notification.winfo_exists():
+                        new_x = current_x + (step * 20)  # Slide out to the right
+                        if new_x >= screen_width:
+                            notification.destroy()
+                            if self.active_notification == notification:
+                                self.active_notification = None
+                        else:
+                            notification.geometry(f"+{new_x}+{notification.winfo_y()}")
+                            notification.after(10, lambda: slide_out(step + 1))
+                
+                # Start slide-out animation
+                slide_out()
         except:
-            pass
+            # Fallback: destroy immediately if animation fails
+            try:
+                if notification and notification.winfo_exists():
+                    notification.destroy()
+                    if self.active_notification == notification:
+                        self.active_notification = None
+            except:
+                pass
     
     def play_notification_sound(self):
         """Play a notification sound"""
